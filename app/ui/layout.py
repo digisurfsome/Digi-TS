@@ -23,6 +23,10 @@ from app.services import (
     clear_chat_history,
     get_token_usage,
     get_setting_as_int,
+    generate_baton,
+    check_auto_baton_trigger,
+    get_warmed_sessions,
+    switch_to_session,
 )
 
 
@@ -518,8 +522,44 @@ def render_chat_panel(
     """
     st.subheader("💬 AI Chat")
 
+    # Check for warmed pending sessions
+    warmed_sessions = get_warmed_sessions(db, user_id, project.id)
+    if warmed_sessions and "baton_notification_shown" not in st.session_state:
+        st.success(f"🎯 New warmed session ready! ({len(warmed_sessions)} available)")
+        st.session_state.baton_notification_shown = True
+
     # Get or create chat session
-    chat_session = get_or_create_chat_session(db, user_id, project.id)
+    # Check if we should use a different session from session state
+    if "current_chat_session_id" in st.session_state:
+        from app.core.models import ChatSession
+        chat_session = db.query(ChatSession).filter(
+            ChatSession.id == st.session_state.current_chat_session_id,
+            ChatSession.user_id == user_id,
+            ChatSession.project_id == project.id
+        ).first()
+        if not chat_session:
+            # Session not found, get default
+            chat_session = get_or_create_chat_session(db, user_id, project.id)
+            st.session_state.current_chat_session_id = chat_session.id
+    else:
+        chat_session = get_or_create_chat_session(db, user_id, project.id)
+        st.session_state.current_chat_session_id = chat_session.id
+
+    # Session switcher
+    if warmed_sessions:
+        with st.expander("🔄 Switch to Warmed Session", expanded=False):
+            for warmed in warmed_sessions:
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.markdown(f"**{warmed.title}**")
+                    st.caption(f"Created: {warmed.created_at.strftime('%Y-%m-%d %H:%M')}")
+                with col2:
+                    if st.button("Switch", key=f"switch_{warmed.id}"):
+                        switch_to_session(db, chat_session.id, warmed.id)
+                        st.session_state.current_chat_session_id = warmed.id
+                        st.session_state.baton_notification_shown = False
+                        show_success("Switched to warmed session!")
+                        st.rerun()
 
     # Get settings
     settings = get_all_settings(db)
@@ -532,8 +572,12 @@ def render_chat_panel(
 
     st.divider()
 
-    # Chat history
-    st.markdown("#### Conversation")
+    # Chat history with warm-up toggle
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.markdown("#### Conversation")
+    with col2:
+        show_warmup = st.checkbox("Show warm-up", value=False, key="show_warmup_toggle")
 
     messages = get_chat_history(db, chat_session.id)
 
@@ -545,16 +589,26 @@ def render_chat_panel(
             st.info("Start a conversation by typing a message below.")
         else:
             for msg in messages:
-                # Skip system messages
-                if msg.role.value == "system":
+                # Filter warm-up messages based on toggle
+                if msg.is_warmup and not show_warmup:
                     continue
+
+                # Skip system messages unless showing warmup
+                if msg.role.value == "system":
+                    if show_warmup:
+                        with st.chat_message("assistant", avatar="📋"):
+                            st.markdown(f"*System: {msg.content[:200]}...*" if len(msg.content) > 200 else f"*System: {msg.content}*")
+                    continue
+
+                # Add warm-up indicator
+                warmup_indicator = " 🔥" if msg.is_warmup else ""
 
                 if msg.role.value == "user":
                     with st.chat_message("user"):
-                        st.markdown(msg.content)
+                        st.markdown(msg.content + warmup_indicator)
                 elif msg.role.value == "assistant":
                     with st.chat_message("assistant"):
-                        st.markdown(msg.content)
+                        st.markdown(msg.content + warmup_indicator)
 
     st.divider()
 
@@ -581,8 +635,25 @@ def render_chat_panel(
             st.rerun()
 
     with col2:
-        if st.button("🎯 Baton Now", help="Create a baton snapshot (coming soon)"):
-            show_info("Baton creation will be implemented in a future phase.")
+        baton_button = st.button("🎯 Baton Now", help="Create a new warmed session with project snapshot")
+
+    # Manual baton creation
+    if baton_button:
+        with st.spinner("Creating baton snapshot and warming new session..."):
+            try:
+                baton, new_session = generate_baton(
+                    db=db,
+                    user_id=user_id,
+                    project_id=project.id,
+                    from_session_id=chat_session.id,
+                    settings=settings,
+                    run_warmup=True
+                )
+                show_success(f"Baton created! New warmed session: {new_session.title}")
+                st.session_state.baton_notification_shown = False
+                st.rerun()
+            except Exception as e:
+                show_error(f"Failed to create baton: {str(e)}")
 
     # Send message
     if send_button and user_input and user_input.strip():
@@ -596,6 +667,28 @@ def render_chat_panel(
                     openai_api_key=openai_key if openai_key else None,
                     chat_model=chat_model
                 )
+
+                # Check for auto-baton trigger
+                if check_auto_baton_trigger(db, chat_session.id, settings):
+                    show_info("Token threshold reached! Creating auto-baton...")
+                    try:
+                        auto_baton, auto_session = generate_baton(
+                            db=db,
+                            user_id=user_id,
+                            project_id=project.id,
+                            from_session_id=chat_session.id,
+                            settings=settings,
+                            run_warmup=True
+                        )
+                        # Update baton type to auto
+                        auto_baton.snapshot_type = "auto"
+                        db.commit()
+
+                        st.session_state.baton_notification_shown = False
+                        show_success("Auto-baton created! A new warmed session is ready.")
+                    except Exception as e:
+                        show_warning(f"Auto-baton creation failed: {str(e)}")
+
                 st.rerun()
             except Exception as e:
                 show_error(f"Chat error: {str(e)}")

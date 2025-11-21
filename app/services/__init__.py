@@ -54,6 +54,13 @@ from app.services.node_service import (
     create_node_from_summary,
 )
 
+from app.services.baton_service import (
+    generate_baton,
+    check_auto_baton_trigger,
+    get_warmed_sessions,
+    switch_to_session,
+)
+
 __all__ = [
     # User service
     "get_or_create_default_user",
@@ -99,4 +106,9 @@ __all__ = [
     "summarize_rant",
     "attach_summary_to_node",
     "create_node_from_summary",
+    # Baton service
+    "generate_baton",
+    "check_auto_baton_trigger",
+    "get_warmed_sessions",
+    "switch_to_session",
 ]

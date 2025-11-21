@@ -133,6 +133,20 @@ DEBUG=true
 
 **📚 See `PHASE5_DESIGN_TREE.md` for detailed documentation**
 
+### Phase 6: Complete ✅
+- Baton snapshot generation with AI-generated project overview
+- Manual baton creation via "Baton Now" button
+- Auto-baton triggered when token threshold reached
+- Warm-up sequence using configurable warmup_prompt_1..4
+- Session switcher for warmed pending sessions
+- Warm-up message filtering (hidden by default, toggle to show)
+- Session status tracking (ACTIVE, WARMING, WARMED_PENDING, ARCHIVED)
+- Comprehensive project state capture in batons
+- Fresh token budget with preserved context
+
+**⚠️ Database Migration Required**: See `MIGRATION_PHASE6.md`
+**📚 See `PHASE6_BATON_WARMUP.md` for detailed documentation and workflow review**
+
 ## Troubleshooting
 
 ### Database Connection Issues

@@ -49,6 +49,14 @@ class MessageRole(str, enum.Enum):
     SYSTEM = "system"
 
 
+class SessionStatus(str, enum.Enum):
+    """Status of a chat session."""
+    ACTIVE = "active"              # Normal active session
+    WARMING = "warming"            # Warm-up in progress
+    WARMED_PENDING = "warmed_pending"  # Warm-up complete, ready to use
+    ARCHIVED = "archived"          # Archived session
+
+
 # Base mixin for common fields
 class TimestampMixin:
     """Mixin for created_at and updated_at timestamps."""
@@ -310,6 +318,13 @@ class ChatSession(Base, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # Session status (for warm-up workflow)
+    status: Mapped[SessionStatus] = mapped_column(
+        SQLEnum(SessionStatus),
+        default=SessionStatus.ACTIVE,
+        nullable=False
+    )
+
     # Session context
     context_snapshot: Mapped[Optional[dict]] = mapped_column(JSON)  # Snapshot of relevant context
     session_type: Mapped[str] = mapped_column(String(50), default="general")  # general, design_review, brainstorm, etc.
@@ -346,6 +361,9 @@ class ChatMessage(Base, TimestampMixin):
     role: Mapped[MessageRole] = mapped_column(SQLEnum(MessageRole), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
 
+    # Warm-up flag
+    is_warmup: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
     # Message metadata
     token_count: Mapped[Optional[int]] = mapped_column(Integer)
     model_used: Mapped[Optional[str]] = mapped_column(String(100))
@@ -371,10 +389,15 @@ class BatonSnapshot(Base, TimestampMixin):
     __tablename__ = "baton_snapshots"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("chat_sessions.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user_profiles.id"), nullable=False, index=True)
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
 
     snapshot_name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
+
+    # Snapshot content (AI-generated markdown description)
+    snapshot_body: Mapped[str] = mapped_column(Text, nullable=False)
 
     # Snapshot data
     state_data: Mapped[dict] = mapped_column(JSON, nullable=False)  # Complete state snapshot
@@ -389,6 +412,8 @@ class BatonSnapshot(Base, TimestampMixin):
     metadata: Mapped[Optional[dict]] = mapped_column(JSON)
 
     # Relationships
+    session: Mapped["ChatSession"] = relationship("ChatSession")
+    user: Mapped["UserProfile"] = relationship("UserProfile")
     project: Mapped["Project"] = relationship("Project", back_populates="batons")
 
     def __repr__(self):
