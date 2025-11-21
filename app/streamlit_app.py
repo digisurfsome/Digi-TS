@@ -33,6 +33,7 @@ from app.ui.layout import (
     render_project_context_ui,
     render_chat_panel,
 )
+from app.ui.node_tree_panel import render_design_tree_panel
 from app.services import (
     get_or_create_default_user,
     list_all_users,
@@ -341,17 +342,17 @@ def main():
                 st.info("Select a project to manage its context.")
 
         with tab4:
-            st.subheader("🎨 Design Tree")
-            st.info("Design tree management will be implemented in Phase 4.")
-            st.markdown(
-                """
-                **Coming soon:**
-                - Visual node tree structure
-                - Create and edit nodes
-                - Version management
-                - AI-powered suggestions
-                """
-            )
+            if st.session_state.get("current_project_id"):
+                with get_db() as db:
+                    from app.services import get_project_by_id
+
+                    project = get_project_by_id(db, st.session_state.current_project_id)
+                    if project:
+                        render_design_tree_panel(db, project)
+                    else:
+                        show_error("Selected project not found.")
+            else:
+                st.info("Select a project to manage design tree nodes.")
 
     # Render footer
     render_footer()

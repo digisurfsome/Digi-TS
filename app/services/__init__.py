@@ -36,6 +36,24 @@ from app.services.chat_service import (
     get_token_usage,
 )
 
+from app.services.node_service import (
+    list_project_nodes,
+    get_nodes_by_domain,
+    get_draft_nodes,
+    get_node_by_id,
+    create_node,
+    create_node_version,
+    get_node_versions,
+    get_node_current_version,
+    update_node_status,
+    update_node_basic_info,
+    delete_node,
+    commit_draft_node,
+    summarize_rant,
+    attach_summary_to_node,
+    create_node_from_summary,
+)
+
 __all__ = [
     # User service
     "get_or_create_default_user",
@@ -65,4 +83,20 @@ __all__ = [
     "send_chat_message",
     "clear_chat_history",
     "get_token_usage",
+    # Node service
+    "list_project_nodes",
+    "get_nodes_by_domain",
+    "get_draft_nodes",
+    "get_node_by_id",
+    "create_node",
+    "create_node_version",
+    "get_node_versions",
+    "get_node_current_version",
+    "update_node_status",
+    "update_node_basic_info",
+    "delete_node",
+    "commit_draft_node",
+    "summarize_rant",
+    "attach_summary_to_node",
+    "create_node_from_summary",
 ]

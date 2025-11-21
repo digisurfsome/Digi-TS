@@ -15,11 +15,18 @@ design-tree-studio/
 │   │   ├── models.py         # SQLAlchemy models
 │   │   └── repositories.py   # Data access layer
 │   ├── services/             # Business logic layer
+│   │   ├── user_service.py
+│   │   ├── project_service.py
+│   │   ├── settings_service.py
+│   │   ├── chat_service.py
+│   │   └── node_service.py   # Node and version management
 │   └── ui/
-│       └── layout.py         # UI components and layouts
+│       ├── layout.py         # UI components and layouts
+│       └── node_tree_panel.py # Design Tree UI
 ├── pyproject.toml            # Poetry dependencies
 ├── requirements.txt          # Pip dependencies
-└── .env.example             # Environment variables template
+├── .env.example             # Environment variables template
+└── PHASE5_DESIGN_TREE.md    # Phase 5 documentation
 ```
 
 ## Setup Instructions
@@ -113,6 +120,18 @@ DEBUG=true
 - "Baton now" placeholder
 
 **⚠️ Database Migration Required**: If upgrading from Phase 3, see `MIGRATION_PHASE4.md`
+
+### Phase 5: Complete ✅
+- Design Tree node management UI
+- Node versioning with full history
+- Domain grouping and organization
+- Draft management workflow
+- AI-powered rant→summary with OpenAI
+- Node editor with version control
+- Status transitions (Draft, Active, Archived, Deleted)
+- Attach summaries to existing nodes or create new ones
+
+**📚 See `PHASE5_DESIGN_TREE.md` for detailed documentation**
 
 ## Troubleshooting
 
