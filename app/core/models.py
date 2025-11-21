@@ -314,6 +314,11 @@ class ChatSession(Base, TimestampMixin):
     context_snapshot: Mapped[Optional[dict]] = mapped_column(JSON)  # Snapshot of relevant context
     session_type: Mapped[str] = mapped_column(String(50), default="general")  # general, design_review, brainstorm, etc.
 
+    # Token tracking
+    total_prompt_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_completion_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_tokens_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
     metadata: Mapped[Optional[dict]] = mapped_column(JSON)
 
     # Relationships

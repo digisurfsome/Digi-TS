@@ -28,6 +28,14 @@ from app.services.settings_service import (
     DEFAULT_SETTINGS,
 )
 
+from app.services.chat_service import (
+    get_or_create_chat_session,
+    get_chat_history,
+    send_chat_message,
+    clear_chat_history,
+    get_token_usage,
+)
+
 __all__ = [
     # User service
     "get_or_create_default_user",
@@ -51,4 +59,10 @@ __all__ = [
     "get_setting_as_int",
     "get_setting_as_bool",
     "DEFAULT_SETTINGS",
+    # Chat service
+    "get_or_create_chat_session",
+    "get_chat_history",
+    "send_chat_message",
+    "clear_chat_history",
+    "get_token_usage",
 ]

@@ -31,6 +31,7 @@ from app.ui.layout import (
     render_create_project_form,
     render_settings_ui,
     render_project_context_ui,
+    render_chat_panel,
 )
 from app.services import (
     get_or_create_default_user,
@@ -293,46 +294,64 @@ def main():
         st.divider()
         st.caption("Design Tree Studio v0.1.0")
 
-    # Main content area with tabs
-    tab1, tab2, tab3, tab4 = st.tabs(
-        ["🏠 System Status", "⚙️ Settings", "📋 Project Context", "🎨 Design Tree"]
-    )
+    # Main content area with columns (chat on left, tabs on right)
+    chat_col, main_col = st.columns([1, 2])
 
-    with tab1:
-        render_system_status()
-
-    with tab2:
-        if "current_user" in locals() and current_user:
-            with get_db() as db:
-                render_settings_ui(db, user_id=None)  # Global settings for now
-        else:
-            st.info("Select a user to configure settings.")
-
-    with tab3:
-        if st.session_state.get("current_project_id"):
+    # Left column: Chat panel
+    with chat_col:
+        if st.session_state.get("current_project_id") and "current_user" in locals() and current_user:
             with get_db() as db:
                 from app.services import get_project_by_id
 
                 project = get_project_by_id(db, st.session_state.current_project_id)
                 if project:
-                    render_project_context_ui(db, project)
+                    render_chat_panel(db, current_user.id, project)
                 else:
-                    show_error("Selected project not found.")
+                    st.warning("Select a project to use chat")
         else:
-            st.info("Select a project to manage its context.")
+            st.info("Select a project to start chatting with AI")
 
-    with tab4:
-        st.subheader("🎨 Design Tree")
-        st.info("Design tree management will be implemented in Phase 4.")
-        st.markdown(
-            """
-            **Coming soon:**
-            - Visual node tree structure
-            - Create and edit nodes
-            - Version management
-            - AI-powered suggestions
-            """
+    # Right column: Tabs
+    with main_col:
+        tab1, tab2, tab3, tab4 = st.tabs(
+            ["🏠 System Status", "⚙️ Settings", "📋 Project Context", "🎨 Design Tree"]
         )
+
+        with tab1:
+            render_system_status()
+
+        with tab2:
+            if "current_user" in locals() and current_user:
+                with get_db() as db:
+                    render_settings_ui(db, user_id=None)  # Global settings for now
+            else:
+                st.info("Select a user to configure settings.")
+
+        with tab3:
+            if st.session_state.get("current_project_id"):
+                with get_db() as db:
+                    from app.services import get_project_by_id
+
+                    project = get_project_by_id(db, st.session_state.current_project_id)
+                    if project:
+                        render_project_context_ui(db, project)
+                    else:
+                        show_error("Selected project not found.")
+            else:
+                st.info("Select a project to manage its context.")
+
+        with tab4:
+            st.subheader("🎨 Design Tree")
+            st.info("Design tree management will be implemented in Phase 4.")
+            st.markdown(
+                """
+                **Coming soon:**
+                - Visual node tree structure
+                - Create and edit nodes
+                - Version management
+                - AI-powered suggestions
+                """
+            )
 
     # Render footer
     render_footer()

@@ -17,6 +17,12 @@ from app.services import (
     set_multiple_settings,
     get_project_context,
     update_project_context,
+    get_or_create_chat_session,
+    get_chat_history,
+    send_chat_message,
+    clear_chat_history,
+    get_token_usage,
+    get_setting_as_int,
 )
 
 
@@ -441,3 +447,157 @@ def render_project_context_ui(db: Session, project: Project) -> None:
             disabled=True,
             label_visibility="collapsed"
         )
+
+
+# Chat Panel Components
+
+def render_token_meter(
+    db: Session,
+    session_id: int,
+    max_tokens: int = 8000
+) -> None:
+    """
+    Render token usage meter with color-coded progress bar.
+
+    Args:
+        db: Database session
+        session_id: Chat session ID
+        max_tokens: Maximum context tokens
+    """
+    # Get token usage
+    token_usage = get_token_usage(db, session_id)
+    total_tokens = token_usage["total_tokens_used"]
+
+    # Calculate percentage
+    percent_used = (total_tokens / max_tokens) * 100 if max_tokens > 0 else 0
+    percent_used = min(percent_used, 100)  # Cap at 100%
+
+    # Determine color based on usage
+    if percent_used < 50:
+        color = "🟢"  # Green
+        bar_color = "normal"
+    elif percent_used < 70:
+        color = "🟡"  # Yellow
+        bar_color = "normal"
+    elif percent_used < 90:
+        color = "🟠"  # Orange
+        bar_color = "normal"
+    else:
+        color = "🔴"  # Red
+        bar_color = "normal"
+
+    # Display meter
+    st.markdown(f"**{color} Token Usage: {total_tokens:,} / {max_tokens:,}** ({percent_used:.1f}%)")
+
+    # Progress bar
+    st.progress(percent_used / 100)
+
+    # Token breakdown in expander
+    with st.expander("Token Details"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Prompt Tokens", f"{token_usage['total_prompt_tokens']:,}")
+        with col2:
+            st.metric("Completion Tokens", f"{token_usage['total_completion_tokens']:,}")
+        with col3:
+            st.metric("Total Used", f"{total_tokens:,}")
+
+
+def render_chat_panel(
+    db: Session,
+    user_id: int,
+    project: Project
+) -> None:
+    """
+    Render chat panel with message history and input.
+
+    Args:
+        db: Database session
+        user_id: Current user ID
+        project: Current project
+    """
+    st.subheader("💬 AI Chat")
+
+    # Get or create chat session
+    chat_session = get_or_create_chat_session(db, user_id, project.id)
+
+    # Get settings
+    settings = get_all_settings(db)
+    max_tokens = int(settings.get("max_context_tokens", "8000"))
+    chat_model = settings.get("DEFAULT_CHAT_MODEL", "gpt-4-turbo-preview")
+    openai_key = settings.get("OPENAI_API_KEY", "")
+
+    # Token meter
+    render_token_meter(db, chat_session.id, max_tokens)
+
+    st.divider()
+
+    # Chat history
+    st.markdown("#### Conversation")
+
+    messages = get_chat_history(db, chat_session.id)
+
+    # Display messages in a container with scrolling
+    chat_container = st.container()
+
+    with chat_container:
+        if not messages:
+            st.info("Start a conversation by typing a message below.")
+        else:
+            for msg in messages:
+                # Skip system messages
+                if msg.role.value == "system":
+                    continue
+
+                if msg.role.value == "user":
+                    with st.chat_message("user"):
+                        st.markdown(msg.content)
+                elif msg.role.value == "assistant":
+                    with st.chat_message("assistant"):
+                        st.markdown(msg.content)
+
+    st.divider()
+
+    # Input area
+    col1, col2 = st.columns([3, 1])
+
+    with col1:
+        user_input = st.text_input(
+            "Message",
+            key="chat_input",
+            placeholder="Type your message...",
+            label_visibility="collapsed"
+        )
+
+    with col2:
+        send_button = st.button("📤 Send", type="primary", use_container_width=True)
+
+    # Clear chat button and Baton button
+    col1, col2, col3 = st.columns([1, 1, 2])
+
+    with col1:
+        if st.button("🗑️ Clear", help="Clear chat history"):
+            clear_chat_history(db, chat_session.id)
+            st.rerun()
+
+    with col2:
+        if st.button("🎯 Baton Now", help="Create a baton snapshot (coming soon)"):
+            show_info("Baton creation will be implemented in a future phase.")
+
+    # Send message
+    if send_button and user_input and user_input.strip():
+        with st.spinner("Thinking..."):
+            try:
+                user_msg, assistant_msg = send_chat_message(
+                    db,
+                    project.id,
+                    chat_session.id,
+                    user_input.strip(),
+                    openai_api_key=openai_key if openai_key else None,
+                    chat_model=chat_model
+                )
+                st.rerun()
+            except Exception as e:
+                show_error(f"Chat error: {str(e)}")
+    elif send_button and not user_input.strip():
+        show_warning("Please enter a message")
