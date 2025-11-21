@@ -13,7 +13,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from app.config.settings import settings
-from app.core.db import test_connection
+from app.core.db import test_connection, initialize_schema, check_tables_exist
 from app.ui.layout import (
     render_header,
     render_sidebar,
@@ -97,6 +97,50 @@ OPENAI_API_KEY=sk-...
                     """
                 )
 
+    # Database Schema Status
+    st.subheader("Database Schema")
+
+    if settings.DATABASE_URL:
+        try:
+            tables_exist, existing_tables = check_tables_exist()
+
+            if tables_exist and len(existing_tables) > 0:
+                show_success(f"Database schema is initialized ({len(existing_tables)} tables found)")
+
+                with st.expander("View existing tables"):
+                    for table in sorted(existing_tables):
+                        st.markdown(f"- `{table}`")
+            else:
+                show_warning("Database schema not initialized")
+                st.markdown(
+                    """
+                    The database is connected but no tables have been created yet.
+                    Click the button below to initialize the database schema.
+                    """
+                )
+
+            # Initialize schema button
+            col1, col2, col3 = st.columns([1, 1, 2])
+            with col1:
+                if st.button("Initialize Schema", type="primary", disabled=tables_exist and len(existing_tables) > 0):
+                    with st.spinner("Creating database tables..."):
+                        success, message = initialize_schema()
+
+                        if success:
+                            show_success(message)
+                            st.rerun()
+                        else:
+                            show_error(message)
+
+            with col2:
+                if st.button("Refresh Status"):
+                    st.rerun()
+
+        except Exception as e:
+            show_error(f"Error checking schema status: {str(e)}")
+    else:
+        show_warning("Configure DATABASE_URL to initialize schema")
+
     # OpenAI configuration status
     st.subheader("OpenAI Configuration")
     if settings.OPENAI_API_KEY:
@@ -109,14 +153,38 @@ OPENAI_API_KEY=sk-...
     if settings.DEBUG:
         st.subheader("Debug Information")
         with st.expander("Show Debug Info"):
-            st.json({
+            debug_info = {
                 "APP_NAME": settings.APP_NAME,
                 "APP_VERSION": settings.APP_VERSION,
                 "DEBUG": settings.DEBUG,
                 "DATABASE_CONFIGURED": bool(settings.DATABASE_URL),
                 "OPENAI_CONFIGURED": bool(settings.OPENAI_API_KEY),
                 "OPENAI_MODEL": settings.OPENAI_MODEL,
-            })
+            }
+
+            if settings.DATABASE_URL:
+                tables_exist, existing_tables = check_tables_exist()
+                debug_info["TABLES_COUNT"] = len(existing_tables)
+                debug_info["TABLES"] = existing_tables
+
+            st.json(debug_info)
+
+        # Model information
+        with st.expander("Show Database Models"):
+            st.markdown("""
+            **Implemented Models:**
+            - `UserProfile` - User accounts and profiles
+            - `Project` - Design projects
+            - `ProjectContext` - Project context and guidelines
+            - `Node` - Hierarchical design tree nodes
+            - `NodeVersion` - Version history for nodes
+            - `DraftMeta` - Draft metadata and AI suggestions
+            - `RantSummary` - AI-generated summaries of discussions
+            - `ChatSession` - AI chat conversation sessions
+            - `ChatMessage` - Individual chat messages
+            - `BatonSnapshot` - Project state snapshots
+            - `Settings` - Application and user settings
+            """)
 
     # Render footer
     render_footer()

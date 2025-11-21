@@ -110,6 +110,9 @@ def create_tables() -> None:
 
     This should be called after all models are imported.
     """
+    # Import models to ensure they're registered with Base
+    from app.core import models  # noqa: F401
+
     engine = get_engine()
     Base.metadata.create_all(bind=engine)
 
@@ -120,5 +123,57 @@ def drop_tables() -> None:
 
     This is primarily for development and testing.
     """
+    from app.core import models  # noqa: F401
+
     engine = get_engine()
     Base.metadata.drop_all(bind=engine)
+
+
+def initialize_schema() -> tuple[bool, str]:
+    """
+    Initialize the database schema by creating all tables.
+
+    Returns:
+        Tuple of (success: bool, message: str)
+    """
+    try:
+        create_tables()
+        return True, "Database schema initialized successfully!"
+    except Exception as e:
+        return False, f"Failed to initialize schema: {str(e)}"
+
+
+def check_tables_exist() -> tuple[bool, list[str]]:
+    """
+    Check if database tables exist.
+
+    Returns:
+        Tuple of (tables_exist: bool, list of table names)
+    """
+    try:
+        from app.core import models  # noqa: F401
+
+        engine = get_engine()
+        from sqlalchemy import inspect
+
+        inspector = inspect(engine)
+        existing_tables = inspector.get_table_names()
+
+        # Expected tables from our models
+        expected_tables = [
+            "user_profiles",
+            "projects",
+            "project_contexts",
+            "nodes",
+            "node_versions",
+            "draft_meta",
+            "rant_summaries",
+            "chat_sessions",
+            "chat_messages",
+            "baton_snapshots",
+            "settings",
+        ]
+
+        return len(existing_tables) > 0, existing_tables
+    except Exception as e:
+        return False, []
