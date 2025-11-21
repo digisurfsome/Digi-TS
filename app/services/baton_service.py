@@ -305,7 +305,7 @@ async def _run_warmup_sequence(
 
         except Exception as e:
             # Log error but continue with remaining prompts
-            print(f"Error in warm-up prompt {i+1}: {str(e)}")
+            # Silently skip failed warm-up prompts to avoid interrupting the warm-up flow
             continue
 
     # Mark session as warmed and ready
@@ -545,7 +545,7 @@ def _run_warmup_sequence_sync(
 
         except Exception as e:
             # Log error but continue with remaining prompts
-            print(f"Error in warm-up prompt {i+1}: {str(e)}")
+            # Silently skip failed warm-up prompts to avoid interrupting the warm-up flow
             continue
 
     # Mark session as warmed and ready

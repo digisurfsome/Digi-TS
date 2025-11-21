@@ -383,7 +383,7 @@ def main():
                         st.markdown(f"**Created:** {selected_project.created_at.strftime('%Y-%m-%d')}")
 
         st.divider()
-        st.caption("Design Tree Studio v0.1.0")
+        st.caption(f"{settings.APP_NAME} v{settings.APP_VERSION}")
 
     # Main content area with columns (chat on left, tabs on right)
     chat_col, main_col = st.columns([1, 2])

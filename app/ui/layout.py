@@ -54,17 +54,17 @@ def render_sidebar() -> None:
     """Render application sidebar with navigation."""
     with st.sidebar:
         st.header("Navigation")
-        # TODO: Add navigation menu in later phases
-        st.info("Navigation menu will be added in later phases")
+        st.info("Use the tabs above to navigate between features")
 
 
 def render_footer() -> None:
     """Render application footer."""
+    from app.config.settings import settings as app_settings
     st.divider()
     st.markdown(
-        """
+        f"""
         <div style='text-align: center; color: gray; padding: 1rem;'>
-            <small>Design Tree Studio v0.1.0</small>
+            <small>{app_settings.APP_NAME} v{app_settings.APP_VERSION}</small>
         </div>
         """,
         unsafe_allow_html=True,
