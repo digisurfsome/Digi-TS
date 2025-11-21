@@ -13,39 +13,39 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from app.config.settings import settings
-from app.core.db import test_connection, initialize_schema, check_tables_exist
+from app.core.db import (
+    test_connection,
+    initialize_schema,
+    check_tables_exist,
+    get_db,
+)
 from app.ui.layout import (
     render_header,
-    render_sidebar,
     render_footer,
     show_success,
     show_error,
     show_warning,
     show_info,
+    render_user_selector,
+    render_project_selector,
+    render_create_project_form,
+    render_settings_ui,
+    render_project_context_ui,
+)
+from app.services import (
+    get_or_create_default_user,
+    list_all_users,
 )
 
 
-def main():
-    """Main application entry point."""
+def init_session_state():
+    """Initialize session state variables."""
+    if "show_create_project" not in st.session_state:
+        st.session_state.show_create_project = False
 
-    # Page configuration
-    st.set_page_config(
-        page_title=settings.APP_NAME,
-        page_icon="🎨",
-        layout="wide",
-        initial_sidebar_state="expanded",
-    )
 
-    # Render header
-    render_header(
-        settings.APP_NAME,
-        "AI-Powered Design Management System",
-    )
-
-    # Render sidebar
-    render_sidebar()
-
-    # Main content
+def render_system_status():
+    """Render the system status tab."""
     st.header("System Status")
 
     # Check configuration
@@ -105,7 +105,9 @@ OPENAI_API_KEY=sk-...
             tables_exist, existing_tables = check_tables_exist()
 
             if tables_exist and len(existing_tables) > 0:
-                show_success(f"Database schema is initialized ({len(existing_tables)} tables found)")
+                show_success(
+                    f"Database schema is initialized ({len(existing_tables)} tables found)"
+                )
 
                 with st.expander("View existing tables"):
                     for table in sorted(existing_tables):
@@ -122,7 +124,11 @@ OPENAI_API_KEY=sk-...
             # Initialize schema button
             col1, col2, col3 = st.columns([1, 1, 2])
             with col1:
-                if st.button("Initialize Schema", type="primary", disabled=tables_exist and len(existing_tables) > 0):
+                if st.button(
+                    "Initialize Schema",
+                    type="primary",
+                    disabled=tables_exist and len(existing_tables) > 0,
+                ):
                     with st.spinner("Creating database tables..."):
                         success, message = initialize_schema()
 
@@ -171,7 +177,8 @@ OPENAI_API_KEY=sk-...
 
         # Model information
         with st.expander("Show Database Models"):
-            st.markdown("""
+            st.markdown(
+                """
             **Implemented Models:**
             - `UserProfile` - User accounts and profiles
             - `Project` - Design projects
@@ -184,7 +191,148 @@ OPENAI_API_KEY=sk-...
             - `ChatMessage` - Individual chat messages
             - `BatonSnapshot` - Project state snapshots
             - `Settings` - Application and user settings
-            """)
+            """
+            )
+
+
+def main():
+    """Main application entry point."""
+
+    # Page configuration
+    st.set_page_config(
+        page_title=settings.APP_NAME,
+        page_icon="🎨",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
+
+    # Initialize session state
+    init_session_state()
+
+    # Render header
+    render_header(
+        settings.APP_NAME,
+        "AI-Powered Design Management System",
+    )
+
+    # Check database connection first
+    if not settings.DATABASE_URL:
+        show_error("Database not configured. Please set DATABASE_URL in your .env file.")
+        render_footer()
+        return
+
+    # Check if schema is initialized
+    tables_exist, existing_tables = check_tables_exist()
+    if not tables_exist or len(existing_tables) == 0:
+        show_warning("Database schema not initialized. Please go to System Status tab to initialize.")
+        st.info("Click 'System Status' tab below and use the 'Initialize Schema' button.")
+
+        # Show system status tab for initialization
+        tab1, tab2, tab3 = st.tabs(["System Status", "Settings", "Project Context"])
+
+        with tab1:
+            render_system_status()
+
+        with tab2:
+            st.info("Initialize database schema first to use Settings.")
+
+        with tab3:
+            st.info("Initialize database schema first to use Project Context.")
+
+        render_footer()
+        return
+
+    # Main application with user/project selection
+    with st.sidebar:
+        st.header("👤 User & Project")
+
+        # User selection with database session
+        with get_db() as db:
+            # Get or create default user
+            default_user = get_or_create_default_user(db)
+            all_users = list_all_users(db)
+
+            # User selector
+            current_user = render_user_selector(db, all_users)
+
+            if not current_user:
+                show_error("Please select a user")
+                return
+
+            st.divider()
+
+            # Project selector
+            if st.session_state.show_create_project:
+                # Show create project form
+                new_project = render_create_project_form(db, current_user)
+                if new_project:
+                    st.session_state.show_create_project = False
+                    st.session_state.current_project_id = new_project.id
+                    st.rerun()
+            else:
+                # Show project selector
+                selected_project, should_create = render_project_selector(db, current_user)
+
+                if should_create:
+                    st.session_state.show_create_project = True
+                    st.rerun()
+
+                # Store selected project in session state
+                if selected_project:
+                    st.session_state.current_project_id = selected_project.id
+                    st.session_state.current_project_name = selected_project.name
+
+                    # Show project info
+                    with st.expander("ℹ️ Project Info"):
+                        st.markdown(f"**Name:** {selected_project.name}")
+                        if selected_project.description:
+                            st.markdown(f"**Description:** {selected_project.description}")
+                        st.markdown(f"**Owner:** {current_user.username}")
+                        st.markdown(f"**Created:** {selected_project.created_at.strftime('%Y-%m-%d')}")
+
+        st.divider()
+        st.caption("Design Tree Studio v0.1.0")
+
+    # Main content area with tabs
+    tab1, tab2, tab3, tab4 = st.tabs(
+        ["🏠 System Status", "⚙️ Settings", "📋 Project Context", "🎨 Design Tree"]
+    )
+
+    with tab1:
+        render_system_status()
+
+    with tab2:
+        if "current_user" in locals() and current_user:
+            with get_db() as db:
+                render_settings_ui(db, user_id=None)  # Global settings for now
+        else:
+            st.info("Select a user to configure settings.")
+
+    with tab3:
+        if st.session_state.get("current_project_id"):
+            with get_db() as db:
+                from app.services import get_project_by_id
+
+                project = get_project_by_id(db, st.session_state.current_project_id)
+                if project:
+                    render_project_context_ui(db, project)
+                else:
+                    show_error("Selected project not found.")
+        else:
+            st.info("Select a project to manage its context.")
+
+    with tab4:
+        st.subheader("🎨 Design Tree")
+        st.info("Design tree management will be implemented in Phase 4.")
+        st.markdown(
+            """
+            **Coming soon:**
+            - Visual node tree structure
+            - Create and edit nodes
+            - Version management
+            - AI-powered suggestions
+            """
+        )
 
     # Render footer
     render_footer()

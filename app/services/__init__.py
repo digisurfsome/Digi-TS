@@ -1,1 +1,54 @@
 """Business logic and service layer."""
+
+from app.services.user_service import (
+    get_or_create_default_user,
+    list_all_users,
+    create_user,
+    get_user_by_id,
+)
+
+from app.services.project_service import (
+    list_user_projects,
+    create_project,
+    get_project_by_id,
+    update_project,
+    delete_project,
+    get_project_context,
+    update_project_context,
+)
+
+from app.services.settings_service import (
+    get_setting,
+    set_setting,
+    get_all_settings,
+    set_multiple_settings,
+    delete_setting,
+    get_setting_as_int,
+    get_setting_as_bool,
+    DEFAULT_SETTINGS,
+)
+
+__all__ = [
+    # User service
+    "get_or_create_default_user",
+    "list_all_users",
+    "create_user",
+    "get_user_by_id",
+    # Project service
+    "list_user_projects",
+    "create_project",
+    "get_project_by_id",
+    "update_project",
+    "delete_project",
+    "get_project_context",
+    "update_project_context",
+    # Settings service
+    "get_setting",
+    "set_setting",
+    "get_all_settings",
+    "set_multiple_settings",
+    "delete_setting",
+    "get_setting_as_int",
+    "get_setting_as_bool",
+    "DEFAULT_SETTINGS",
+]
