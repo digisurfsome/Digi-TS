@@ -33,6 +33,13 @@ class NodeStatus(str, enum.Enum):
     DELETED = "deleted"
 
 
+class DescriptionMode(str, enum.Enum):
+    """Mode for project description."""
+    MANUAL = "manual"      # Use only manual description
+    AUTO = "auto"          # Use only auto-generated description
+    MERGE = "merge"        # Merge manual and auto descriptions
+
+
 class NodeType(str, enum.Enum):
     """Type of node in the design tree."""
     ROOT = "root"
@@ -149,6 +156,17 @@ class ProjectContext(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     context_type: Mapped[str] = mapped_column(String(50), default="general")  # general, design_system, guidelines, etc.
     content: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Auto-generated description (Phase 7)
+    auto_description: Mapped[Optional[str]] = mapped_column(Text)
+
+    # Description mode selector (Phase 7)
+    description_mode: Mapped[DescriptionMode] = mapped_column(
+        SQLEnum(DescriptionMode),
+        default=DescriptionMode.MANUAL,
+        nullable=False
+    )
+
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     priority: Mapped[int] = mapped_column(Integer, default=0)  # For ordering contexts
     metadata: Mapped[Optional[dict]] = mapped_column(JSON)

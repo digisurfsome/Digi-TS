@@ -32,6 +32,7 @@ from app.ui.layout import (
     render_settings_ui,
     render_project_context_ui,
     render_chat_panel,
+    render_truth_doc_export_ui,
 )
 from app.ui.node_tree_panel import render_design_tree_panel
 from app.services import (
@@ -314,8 +315,8 @@ def main():
 
     # Right column: Tabs
     with main_col:
-        tab1, tab2, tab3, tab4 = st.tabs(
-            ["🏠 System Status", "⚙️ Settings", "📋 Project Context", "🎨 Design Tree"]
+        tab1, tab2, tab3, tab4, tab5 = st.tabs(
+            ["🏠 System Status", "⚙️ Settings", "📋 Project Context", "🎨 Design Tree", "📄 Truth Doc"]
         )
 
         with tab1:
@@ -353,6 +354,19 @@ def main():
                         show_error("Selected project not found.")
             else:
                 st.info("Select a project to manage design tree nodes.")
+
+        with tab5:
+            if st.session_state.get("current_project_id"):
+                with get_db() as db:
+                    from app.services import get_project_by_id
+
+                    project = get_project_by_id(db, st.session_state.current_project_id)
+                    if project:
+                        render_truth_doc_export_ui(db, project)
+                    else:
+                        show_error("Selected project not found.")
+            else:
+                st.info("Select a project to export Truth Doc.")
 
     # Render footer
     render_footer()

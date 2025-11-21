@@ -61,6 +61,18 @@ from app.services.baton_service import (
     switch_to_session,
 )
 
+from app.services.summary_service import (
+    generate_auto_project_description,
+    get_combined_description,
+    update_description_mode,
+)
+
+from app.services.export_truth_doc import (
+    export_truth_doc,
+    get_truth_doc_filename,
+    get_truth_doc_preview,
+)
+
 __all__ = [
     # User service
     "get_or_create_default_user",
@@ -111,4 +123,12 @@ __all__ = [
     "check_auto_baton_trigger",
     "get_warmed_sessions",
     "switch_to_session",
+    # Summary service
+    "generate_auto_project_description",
+    "get_combined_description",
+    "update_description_mode",
+    # Export service
+    "export_truth_doc",
+    "get_truth_doc_filename",
+    "get_truth_doc_preview",
 ]

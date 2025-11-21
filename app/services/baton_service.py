@@ -23,6 +23,7 @@ from app.core.models import (
     NodeStatus,
 )
 from app.config.settings import settings as app_settings
+from app.services.summary_service import get_combined_description
 
 
 def _gather_project_state(
@@ -44,11 +45,8 @@ def _gather_project_state(
     if not project:
         raise ValueError(f"Project {project_id} not found")
 
-    # Get project context
-    context = db.query(ProjectContext).filter(
-        ProjectContext.project_id == project_id,
-        ProjectContext.is_active == True
-    ).first()
+    # Get combined project description based on description_mode
+    combined_description = get_combined_description(db, project_id)
 
     # Get all active nodes with current versions
     nodes = db.query(Node).filter(
@@ -117,10 +115,7 @@ def _gather_project_state(
             "name": project.name,
             "description": project.description,
         },
-        "context": {
-            "manual_description": context.content if context else None,
-            "auto_description": None,  # TODO: implement auto-description
-        },
+        "combined_description": combined_description,
         "nodes": nodes_data,
         "recent_changes": recent_changes,
         "drafts": drafts_data,
@@ -151,7 +146,7 @@ def _build_baton_prompt(
 {project_state['project']['description'] or 'No description provided'}
 
 ## Project Context
-{project_state['context']['manual_description'] or 'No context provided'}
+{project_state['combined_description']}
 
 ## Current State
 - Total Nodes: {project_state['node_count']}

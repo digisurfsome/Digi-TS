@@ -8,7 +8,7 @@ import streamlit as st
 from typing import Optional, List, Tuple, Dict
 from sqlalchemy.orm import Session
 
-from app.core.models import UserProfile, Project
+from app.core.models import UserProfile, Project, DescriptionMode
 from app.services import (
     list_all_users,
     list_user_projects,
@@ -27,6 +27,12 @@ from app.services import (
     check_auto_baton_trigger,
     get_warmed_sessions,
     switch_to_session,
+    generate_auto_project_description,
+    get_combined_description,
+    update_description_mode,
+    export_truth_doc,
+    get_truth_doc_filename,
+    get_truth_doc_preview,
 )
 
 
@@ -398,6 +404,39 @@ def render_project_context_ui(db: Session, project: Project) -> None:
     # Get current context
     context = get_project_context(db, project.id)
 
+    # Description Mode Selector
+    st.markdown("#### Description Mode")
+    current_mode = context.description_mode if context else DescriptionMode.MANUAL
+
+    mode_options = {
+        "Manual Only": DescriptionMode.MANUAL,
+        "Auto-Generated Only": DescriptionMode.AUTO,
+        "Merged (Manual + Auto)": DescriptionMode.MERGE
+    }
+
+    selected_mode_label = [k for k, v in mode_options.items() if v == current_mode][0]
+
+    new_mode_label = st.selectbox(
+        "Choose how to combine manual and auto descriptions",
+        options=list(mode_options.keys()),
+        index=list(mode_options.keys()).index(selected_mode_label),
+        help="Manual: use only manual description | Auto: use only AI-generated | Merge: combine both"
+    )
+
+    new_mode = mode_options[new_mode_label]
+
+    # Update mode if changed
+    if new_mode != current_mode:
+        try:
+            update_description_mode(db, project.id, new_mode)
+            show_success(f"Description mode updated to: {new_mode_label}")
+            st.rerun()
+        except Exception as e:
+            show_error(f"Failed to update mode: {str(e)}")
+
+    st.divider()
+
+    # Manual description
     col1, col2 = st.columns([2, 1])
 
     with col1:
@@ -405,14 +444,14 @@ def render_project_context_ui(db: Session, project: Project) -> None:
         st.caption("Describe your project, design system, and guidelines.")
 
     with col2:
-        if st.button("💾 Save Context"):
+        if st.button("💾 Save Manual", help="Save manual description"):
             st.session_state.save_context_clicked = True
 
     # Manual description editor
     manual_desc = st.text_area(
         "Manual Description",
         value=context.content if context else "",
-        height=300,
+        height=250,
         label_visibility="collapsed",
         help="Enter project context, design guidelines, constraints, etc."
     )
@@ -421,35 +460,152 @@ def render_project_context_ui(db: Session, project: Project) -> None:
     if st.session_state.get("save_context_clicked"):
         try:
             update_project_context(db, project.id, manual_desc)
-            show_success("Project context saved successfully!")
+            show_success("Manual description saved successfully!")
             st.session_state.save_context_clicked = False
             st.rerun()
         except Exception as e:
-            show_error(f"Failed to save context: {str(e)}")
+            show_error(f"Failed to save description: {str(e)}")
 
     st.divider()
 
-    # Auto description (placeholder for now)
-    st.markdown("#### Auto Description")
-    st.caption("AI-generated summary of your project state.")
+    # Auto description
+    col1, col2 = st.columns([2, 1])
 
-    with st.container():
-        col1, col2 = st.columns([3, 1])
+    with col1:
+        st.markdown("#### Auto Description")
+        st.caption("AI-generated summary from your project nodes and structure.")
 
-        with col1:
-            st.info("Auto-description will be generated from project nodes and activity.")
+    with col2:
+        regenerate_btn = st.button("🔄 Regenerate", help="Generate fresh auto-description from current project state")
 
-        with col2:
-            if st.button("🔄 Regenerate", help="Generate fresh auto-description"):
-                show_info("Auto-description generation will be implemented in a future phase.")
+    # Regenerate auto description if button clicked
+    if regenerate_btn:
+        with st.spinner("Generating auto-description from project nodes..."):
+            try:
+                settings = get_all_settings(db)
+                auto_desc = generate_auto_project_description(db, project.id, settings)
+                show_success("Auto-description generated successfully!")
+                st.rerun()
+            except Exception as e:
+                show_error(f"Failed to generate auto-description: {str(e)}")
 
-        # Placeholder for auto-generated content
-        st.text_area(
-            "Auto-generated description",
-            value="(Auto-description not yet implemented)",
-            height=150,
-            disabled=True,
-            label_visibility="collapsed"
+    # Display auto-generated content
+    auto_desc_value = context.auto_description if context and context.auto_description else "(No auto-description generated yet. Click 'Regenerate' above.)"
+
+    st.text_area(
+        "Auto-generated description",
+        value=auto_desc_value,
+        height=250,
+        disabled=True,
+        label_visibility="collapsed",
+        help="This description is automatically generated from your project structure and nodes"
+    )
+
+    st.divider()
+
+    # Preview of combined description based on mode
+    with st.expander("👁️ Preview Combined Description", expanded=False):
+        st.markdown("**This is how the description will appear in Batons and Truth Doc:**")
+        st.divider()
+        combined = get_combined_description(db, project.id)
+        st.markdown(combined)
+
+
+def render_truth_doc_export_ui(db: Session, project: Project) -> None:
+    """
+    Render Truth Doc export UI.
+
+    Args:
+        db: Database session
+        project: Current project
+    """
+    st.subheader("📄 Truth Doc Export")
+    st.markdown(f"Export comprehensive documentation for **{project.name}**")
+
+    st.info(
+        "Truth Doc is a complete markdown document containing your project description, "
+        "all components with their versions, and full history. Perfect for documentation, "
+        "handoffs, or archival."
+    )
+
+    # Export options
+    include_archived = st.checkbox(
+        "Include archived/deleted nodes",
+        value=False,
+        help="Include components that have been archived or deleted"
+    )
+
+    col1, col2, col3 = st.columns([1, 1, 2])
+
+    with col1:
+        preview_btn = st.button("👁️ Preview", type="secondary", use_container_width=True)
+
+    with col2:
+        export_btn = st.button("📥 Export", type="primary", use_container_width=True)
+
+    # Preview Truth Doc
+    if preview_btn:
+        with st.spinner("Generating Truth Doc preview..."):
+            try:
+                truth_doc = export_truth_doc(db, project.id, include_archived)
+                preview = get_truth_doc_preview(truth_doc, max_lines=100)
+
+                st.divider()
+                st.markdown("### Truth Doc Preview")
+                st.caption(f"Showing first 100 lines. Full document has {len(truth_doc.split(chr(10)))} lines.")
+
+                st.code(preview, language="markdown")
+
+                # Store full doc in session for download
+                st.session_state.truth_doc_full = truth_doc
+                st.session_state.truth_doc_filename = get_truth_doc_filename(project.name)
+
+            except Exception as e:
+                show_error(f"Failed to generate preview: {str(e)}")
+
+    # Export Truth Doc
+    if export_btn:
+        with st.spinner("Generating complete Truth Doc..."):
+            try:
+                truth_doc = export_truth_doc(db, project.id, include_archived)
+                filename = get_truth_doc_filename(project.name)
+
+                # Store in session
+                st.session_state.truth_doc_full = truth_doc
+                st.session_state.truth_doc_filename = filename
+
+                show_success(f"Truth Doc generated! ({len(truth_doc)} characters, {len(truth_doc.split(chr(10)))} lines)")
+
+                st.divider()
+
+                # Download button
+                st.download_button(
+                    label="💾 Download Truth Doc",
+                    data=truth_doc,
+                    file_name=filename,
+                    mime="text/markdown",
+                    type="primary",
+                    use_container_width=True
+                )
+
+                # Copy to clipboard option
+                st.markdown("**Or copy to clipboard:**")
+                st.code(truth_doc, language="markdown", line_numbers=False)
+
+            except Exception as e:
+                show_error(f"Failed to generate Truth Doc: {str(e)}")
+
+    # If doc is in session, show download button
+    if st.session_state.get("truth_doc_full"):
+        st.divider()
+        st.markdown("### Download Truth Doc")
+
+        st.download_button(
+            label="💾 Download Truth Doc",
+            data=st.session_state.truth_doc_full,
+            file_name=st.session_state.get("truth_doc_filename", "truth_doc.md"),
+            mime="text/markdown",
+            use_container_width=True
         )
 
 
