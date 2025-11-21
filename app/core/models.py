@@ -122,7 +122,7 @@ class Project(Base, TimestampMixin):
     owner_id: Mapped[int] = mapped_column(ForeignKey("user_profiles.id"), nullable=False, index=True)
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     tags: Mapped[Optional[list]] = mapped_column(JSON)  # Array of tags
-    metadata: Mapped[Optional[dict]] = mapped_column(JSON)  # Additional project metadata
+    extra_metadata: Mapped[Optional[dict]] = mapped_column("metadata", JSON)  # Additional project metadata
 
     # Relationships
     owner: Mapped["UserProfile"] = relationship("UserProfile", back_populates="projects")
@@ -169,7 +169,7 @@ class ProjectContext(Base, TimestampMixin):
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     priority: Mapped[int] = mapped_column(Integer, default=0)  # For ordering contexts
-    metadata: Mapped[Optional[dict]] = mapped_column(JSON)
+    extra_metadata: Mapped[Optional[dict]] = mapped_column("metadata", JSON)
 
     # Relationships
     project: Mapped["Project"] = relationship("Project", back_populates="contexts")
@@ -202,7 +202,7 @@ class Node(Base, TimestampMixin):
     current_version_id: Mapped[Optional[int]] = mapped_column(Integer)  # References latest NodeVersion
 
     tags: Mapped[Optional[list]] = mapped_column(JSON)
-    metadata: Mapped[Optional[dict]] = mapped_column(JSON)
+    extra_metadata: Mapped[Optional[dict]] = mapped_column("metadata", JSON)
 
     # Relationships
     project: Mapped["Project"] = relationship("Project", back_populates="nodes")
@@ -247,7 +247,7 @@ class NodeVersion(Base, TimestampMixin):
     ai_summary: Mapped[Optional[str]] = mapped_column(Text)
     ai_metadata: Mapped[Optional[dict]] = mapped_column(JSON)
 
-    metadata: Mapped[Optional[dict]] = mapped_column(JSON)
+    extra_metadata: Mapped[Optional[dict]] = mapped_column("metadata", JSON)
 
     # Relationships
     node: Mapped["Node"] = relationship("Node", back_populates="versions")
@@ -278,7 +278,7 @@ class DraftMeta(Base, TimestampMixin):
     is_reviewing: Mapped[bool] = mapped_column(Boolean, default=False)
     last_ai_update: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
-    metadata: Mapped[Optional[dict]] = mapped_column(JSON)
+    extra_metadata: Mapped[Optional[dict]] = mapped_column("metadata", JSON)
 
     # Relationships
     node: Mapped["Node"] = relationship("Node", back_populates="draft_meta")
@@ -312,7 +312,7 @@ class RantSummary(Base, TimestampMixin):
     sentiment: Mapped[Optional[str]] = mapped_column(String(50))
     confidence_score: Mapped[Optional[float]] = mapped_column(Float)
 
-    metadata: Mapped[Optional[dict]] = mapped_column(JSON)
+    extra_metadata: Mapped[Optional[dict]] = mapped_column("metadata", JSON)
 
     def __repr__(self):
         return f"<RantSummary(id={self.id}, title='{self.title}')>"
@@ -352,7 +352,7 @@ class ChatSession(Base, TimestampMixin):
     total_completion_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     total_tokens_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
-    metadata: Mapped[Optional[dict]] = mapped_column(JSON)
+    extra_metadata: Mapped[Optional[dict]] = mapped_column("metadata", JSON)
 
     # Relationships
     user: Mapped["UserProfile"] = relationship("UserProfile", back_populates="chat_sessions")
@@ -389,7 +389,7 @@ class ChatMessage(Base, TimestampMixin):
     # For assistant messages
     function_call: Mapped[Optional[dict]] = mapped_column(JSON)
 
-    metadata: Mapped[Optional[dict]] = mapped_column(JSON)
+    extra_metadata: Mapped[Optional[dict]] = mapped_column("metadata", JSON)
 
     # Relationships
     session: Mapped["ChatSession"] = relationship("ChatSession", back_populates="messages")
@@ -427,7 +427,7 @@ class BatonSnapshot(Base, TimestampMixin):
     # Hash for integrity checking
     state_hash: Mapped[Optional[str]] = mapped_column(String(64))
 
-    metadata: Mapped[Optional[dict]] = mapped_column(JSON)
+    extra_metadata: Mapped[Optional[dict]] = mapped_column("metadata", JSON)
 
     # Relationships
     session: Mapped["ChatSession"] = relationship("ChatSession")
@@ -457,7 +457,7 @@ class Settings(Base, TimestampMixin):
     is_encrypted: Mapped[bool] = mapped_column(Boolean, default=False)
 
     description: Mapped[Optional[str]] = mapped_column(String(500))
-    metadata: Mapped[Optional[dict]] = mapped_column(JSON)
+    extra_metadata: Mapped[Optional[dict]] = mapped_column("metadata", JSON)
 
     def __repr__(self):
         return f"<Settings(id={self.id}, key='{self.setting_key}', global={self.is_global})>"
