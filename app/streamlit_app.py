@@ -45,6 +45,89 @@ def init_session_state():
     """Initialize session state variables."""
     if "show_create_project" not in st.session_state:
         st.session_state.show_create_project = False
+    if "pin_verified" not in st.session_state:
+        st.session_state.pin_verified = False
+    if "pin_attempts" not in st.session_state:
+        st.session_state.pin_attempts = 0
+
+
+def check_pin_lock():
+    """
+    Check if PIN lock is enabled and verify PIN.
+
+    Returns:
+        bool: True if PIN is not required or verified, False otherwise
+    """
+    # Try to get PIN from settings
+    try:
+        with get_db() as db:
+            from app.services import get_setting
+            pin_code = get_setting(db, "pin_code")
+
+            # No PIN set, allow access
+            if not pin_code or pin_code.strip() == "":
+                st.session_state.pin_verified = True
+                return True
+
+            # PIN already verified in this session
+            if st.session_state.get("pin_verified", False):
+                return True
+
+            # Show PIN entry form
+            st.title("🔒 PIN Required")
+            st.info("This application is protected with a PIN. Please enter the PIN to continue.")
+
+            col1, col2, col3 = st.columns([1, 2, 1])
+
+            with col2:
+                pin_input = st.text_input(
+                    "Enter PIN",
+                    type="password",
+                    key="pin_input",
+                    placeholder="Enter your PIN code"
+                )
+
+                col_a, col_b = st.columns(2)
+
+                with col_a:
+                    if st.button("Unlock", type="primary", use_container_width=True):
+                        if pin_input == pin_code:
+                            st.session_state.pin_verified = True
+                            st.session_state.pin_attempts = 0
+                            show_success("PIN verified! Access granted.")
+                            st.rerun()
+                        else:
+                            st.session_state.pin_attempts += 1
+                            show_error(f"Incorrect PIN. Attempt {st.session_state.pin_attempts}")
+
+                            if st.session_state.pin_attempts >= 3:
+                                st.warning("Multiple failed attempts detected. Please check your PIN configuration.")
+
+                with col_b:
+                    if st.button("Exit", use_container_width=True):
+                        st.stop()
+
+            # Show hint after multiple attempts
+            if st.session_state.pin_attempts >= 3:
+                with st.expander("ℹ️ Need Help?"):
+                    st.markdown("""
+                    **To reset or change the PIN:**
+
+                    1. Access the database directly and update the `settings` table
+                    2. Set `pin_code` to empty string to disable PIN lock
+                    3. Or set a new PIN value
+
+                    **For development:**
+                    - Check your Settings in the database
+                    - PIN is stored in the `settings` table with key `pin_code`
+                    """)
+
+            return False
+
+    except Exception as e:
+        # If we can't check PIN (e.g., DB not initialized), allow access
+        st.session_state.pin_verified = True
+        return True
 
 
 def render_system_status():
@@ -211,6 +294,12 @@ def main():
 
     # Initialize session state
     init_session_state()
+
+    # Check PIN lock (Phase 8)
+    if not check_pin_lock():
+        # PIN not verified, show PIN form only
+        render_footer()
+        return
 
     # Render header
     render_header(

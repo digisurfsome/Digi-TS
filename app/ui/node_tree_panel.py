@@ -67,12 +67,37 @@ def render_node_list(
     """
     st.subheader("📂 Nodes by Domain")
 
+    # Search/filter input (Phase 8)
+    search_query = st.text_input(
+        "🔍 Search nodes",
+        placeholder="Filter by title or domain...",
+        key="node_search_filter"
+    )
+
     # Get nodes grouped by domain
     domains = get_nodes_by_domain(db, project.id, include_deleted=False)
 
     if not domains:
         show_info("No nodes yet. Create your first node below!")
         return
+
+    # Filter domains and nodes based on search query
+    if search_query:
+        search_lower = search_query.lower()
+        filtered_domains = {}
+        for domain, nodes in domains.items():
+            # Filter nodes that match title or domain
+            filtered_nodes = [
+                node for node in nodes
+                if search_lower in node.title.lower() or search_lower in (node.domain or "").lower()
+            ]
+            if filtered_nodes:
+                filtered_domains[domain] = filtered_nodes
+        domains = filtered_domains
+
+        if not domains:
+            st.info(f"No nodes found matching '{search_query}'")
+            return
 
     # Render each domain
     for domain, nodes in sorted(domains.items()):

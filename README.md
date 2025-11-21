@@ -160,6 +160,17 @@ DEBUG=true
 **⚠️ Database Migration Required**: See `MIGRATION_PHASE7.md`
 **📚 See `PHASE7_AUTO_DESCRIPTION_TRUTH_DOC.md` for detailed documentation and workflow review**
 
+### Phase 8: Complete ✅
+- PIN lock for basic application security
+- Current project and session display for better user orientation
+- "New session (no baton)" button for clean slate conversations
+- Node search/filter for quick navigation in large projects
+- Comprehensive error handling review and documentation
+- UX improvements and session state management
+- Help text for PIN recovery and graceful fallbacks
+
+**📚 See `PHASE8_POLISH_UX.md` for detailed documentation and workflow review**
+
 ## Troubleshooting
 
 ### Database Connection Issues

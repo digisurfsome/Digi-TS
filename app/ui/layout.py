@@ -701,6 +701,49 @@ def render_chat_panel(
         chat_session = get_or_create_chat_session(db, user_id, project.id)
         st.session_state.current_chat_session_id = chat_session.id
 
+    # Display current project and session info (Phase 8)
+    col1, col2, col3 = st.columns([2, 2, 1])
+    with col1:
+        st.markdown(f"**Project:** {project.name}")
+    with col2:
+        st.markdown(f"**Session:** {chat_session.title}")
+    with col3:
+        # New session button
+        if st.button("🆕 New", help="Start a new clean session (no baton)", use_container_width=True):
+            try:
+                from datetime import datetime
+                from app.core.models import ChatSession, SessionStatus
+
+                # Create new clean session
+                new_session = ChatSession(
+                    user_id=user_id,
+                    project_id=project.id,
+                    title=f"Session - {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                    description="Clean session without baton",
+                    session_type="general",
+                    is_active=True,
+                    status=SessionStatus.ACTIVE,
+                    total_prompt_tokens=0,
+                    total_completion_tokens=0,
+                    total_tokens_used=0
+                )
+                db.add(new_session)
+
+                # Deactivate old session
+                chat_session.is_active = False
+
+                db.commit()
+                db.refresh(new_session)
+
+                # Update session state
+                st.session_state.current_chat_session_id = new_session.id
+                show_success("New clean session started!")
+                st.rerun()
+            except Exception as e:
+                show_error(f"Failed to create new session: {str(e)}")
+
+    st.divider()
+
     # Session switcher
     if warmed_sessions:
         with st.expander("🔄 Switch to Warmed Session", expanded=False):
