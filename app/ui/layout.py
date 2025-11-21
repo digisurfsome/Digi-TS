@@ -142,41 +142,64 @@ def render_project_selector(
     """
     projects = list_user_projects(db, user.id)
 
+    if not projects:
+        st.info("📁 No projects yet – create your first project below!")
+        if st.button("➕ Create First Project", type="primary", use_container_width=True):
+            return None, True
+        return None, False
+
+    # Build project options
+    project_options = {p.name: p for p in projects}
+    project_names = list(project_options.keys())
+
+    # Determine current selection
+    current_selection = None
+
+    # First priority: use current_project_id if set
+    if "current_project_id" in st.session_state:
+        for name, proj in project_options.items():
+            if proj.id == st.session_state.current_project_id:
+                current_selection = name
+                break
+
+    # Second priority: use selected_project_name if set and valid
+    if not current_selection and "selected_project_name" in st.session_state:
+        if st.session_state.selected_project_name in project_names:
+            current_selection = st.session_state.selected_project_name
+
+    # Default: select first project
+    if not current_selection:
+        current_selection = project_names[0]
+
+    # Update session state to match
+    st.session_state.selected_project_name = current_selection
+
+    # Render selectbox
     col1, col2 = st.columns([3, 1])
 
     with col1:
-        if not projects:
-            st.info("No projects found. Create your first project!")
-            return None, True
-
-        project_options = {f"{p.name}": p for p in projects}
-        project_options["+ Create New Project"] = None
-
-        project_names = list(project_options.keys())
-
-        # Initialize session state
-        if "selected_project_name" not in st.session_state or st.session_state.selected_project_name not in project_names:
-            st.session_state.selected_project_name = project_names[0] if project_names else None
-
         selected_name = st.selectbox(
             "Select Project",
             project_names,
+            index=project_names.index(current_selection),
             key="project_selector",
-            index=project_names.index(st.session_state.selected_project_name) if st.session_state.selected_project_name in project_names else 0
         )
 
-        st.session_state.selected_project_name = selected_name
-
-        if selected_name == "+ Create New Project":
-            return None, True
-
-        return project_options[selected_name], False
+        # Update session state when selection changes
+        if selected_name != st.session_state.selected_project_name:
+            st.session_state.selected_project_name = selected_name
+            selected_project = project_options[selected_name]
+            st.session_state.current_project_id = selected_project.id
+            st.session_state.current_project_name = selected_project.name
+            st.rerun()
 
     with col2:
-        if st.button("➕ New", help="Create a new project"):
+        if st.button("➕ New", help="Create a new project", use_container_width=True):
             return None, True
 
-    return None, False
+    # Return the selected project
+    selected_project = project_options[selected_name]
+    return selected_project, False
 
 
 def render_create_project_form(db: Session, user: UserProfile) -> Optional[Project]:

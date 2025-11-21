@@ -360,6 +360,7 @@ def main():
                 if new_project:
                     st.session_state.show_create_project = False
                     st.session_state.current_project_id = new_project.id
+                    st.session_state.current_project_name = new_project.name
                     st.rerun()
             else:
                 # Show project selector
@@ -396,11 +397,13 @@ def main():
 
                 project = get_project_by_id(db, st.session_state.current_project_id)
                 if project:
+                    # Show current project banner
+                    st.success(f"📁 **Current Project:** {project.name}")
                     render_chat_panel(db, current_user.id, project)
                 else:
-                    st.warning("Select a project to use chat")
+                    st.warning("⚠️ Selected project not found. Please select a project from the sidebar.")
         else:
-            st.info("Select a project to start chatting with AI")
+            st.info("📁 **No Project Selected**\n\nPlease select or create a project in the left sidebar to start chatting with AI.")
 
     # Right column: Tabs
     with main_col:
@@ -427,9 +430,9 @@ def main():
                     if project:
                         render_project_context_ui(db, project)
                     else:
-                        show_error("Selected project not found.")
+                        show_error("⚠️ Selected project not found. Please select a project from the sidebar.")
             else:
-                st.info("Select a project to manage its context.")
+                st.info("📁 **No Project Selected**\n\nPlease select or create a project in the left sidebar to manage project context.")
 
         with tab4:
             if st.session_state.get("current_project_id"):
@@ -440,9 +443,9 @@ def main():
                     if project:
                         render_design_tree_panel(db, project)
                     else:
-                        show_error("Selected project not found.")
+                        show_error("⚠️ Selected project not found. Please select a project from the sidebar.")
             else:
-                st.info("Select a project to manage design tree nodes.")
+                st.info("📁 **No Project Selected**\n\nPlease select or create a project in the left sidebar to manage design tree nodes.")
 
         with tab5:
             if st.session_state.get("current_project_id"):
@@ -453,9 +456,9 @@ def main():
                     if project:
                         render_truth_doc_export_ui(db, project)
                     else:
-                        show_error("Selected project not found.")
+                        show_error("⚠️ Selected project not found. Please select a project from the sidebar.")
             else:
-                st.info("Select a project to export Truth Doc.")
+                st.info("📁 **No Project Selected**\n\nPlease select or create a project in the left sidebar to export Truth Doc.")
 
     # Render footer
     render_footer()
