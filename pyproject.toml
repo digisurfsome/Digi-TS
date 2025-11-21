@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "design-tree-studio"
+version = "0.1.0"
+description = "Design Tree Studio - AI-powered design management system"
+authors = ["Design Tree Studio Team"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.9"
+streamlit = "^1.31.0"
+sqlalchemy = "^2.0.25"
+psycopg2-binary = "^2.9.9"
+python-dotenv = "^1.0.0"
+openai = "^1.12.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0.0"
+black = "^24.0.0"
+flake8 = "^7.0.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
