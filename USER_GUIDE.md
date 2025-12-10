@@ -73,7 +73,34 @@ The Design Tree is where you organize your project into **Nodes**. Think of node
 2. Fill in Name, Type, Description
 3. Click "Create Node"
 
-### 3. Rant → Summary
+### 3. Auto Node Detection (NEW!)
+As you chat with the AI, it automatically watches for things that should become nodes!
+
+**How it works:**
+1. You chat naturally about your project
+2. When you describe a feature, component, or concept in detail, the AI detects it
+3. A popup appears asking "Was this a node?"
+4. Click **Create** to add it, or **Skip** to dismiss
+
+**What gets detected:**
+- Feature requests ("I need a login page...")
+- Component descriptions ("The header should have...")
+- Design elements ("The color scheme uses...")
+- Important decisions ("We're going with React for...")
+
+**Example:**
+> You: "I want a search bar at the top of the dashboard that filters products in real-time"
+>
+> AI responds with details...
+>
+> **Popup appears:**
+> 🧩 **Search Bar** (Component)
+> Real-time product filtering for dashboard
+> [Create] [Skip]
+
+This means you don't have to manually create every node - they emerge naturally from your conversation!
+
+### 4. Rant → Summary
 Don't know how to organize your thoughts? Just dump them!
 
 1. Go to **Design Tree** → **Rant → Summary** tab
@@ -82,7 +109,7 @@ Don't know how to organize your thoughts? Just dump them!
 4. AI organizes it into structured content
 5. Save it as a new node or attach to existing one
 
-### 4. Project Context
+### 5. Project Context
 This is background info that the AI always knows about when chatting.
 
 1. Go to **Project Context** tab

@@ -33,7 +33,11 @@ from app.services import (
     export_truth_doc,
     get_truth_doc_filename,
     get_truth_doc_preview,
+    detect_nodes_from_exchange,
+    get_node_type_icon,
+    create_node,
 )
+from app.core.models import NodeType, NodeStatus
 
 
 def render_header(title: str, subtitle: Optional[str] = None) -> None:
@@ -887,6 +891,20 @@ def render_chat_panel(
                     chat_model=chat_model
                 )
 
+                # Auto-detect potential nodes from this exchange
+                if openai_key or settings.get("OPENAI_API_KEY"):
+                    api_key_for_detection = openai_key or settings.get("OPENAI_API_KEY")
+                    detected = detect_nodes_from_exchange(
+                        user_message=user_input.strip(),
+                        assistant_message=assistant_msg.content,
+                        openai_api_key=api_key_for_detection,
+                        model=settings.get("DEFAULT_SUMMARY_MODEL", "gpt-4-turbo-preview")
+                    )
+                    if detected:
+                        # Store detected nodes in session state for UI display
+                        st.session_state.detected_nodes = detected
+                        st.session_state.detected_nodes_project_id = project.id
+
                 # Check for auto-baton trigger
                 if check_auto_baton_trigger(db, chat_session.id, settings):
                     show_info("Token threshold reached! Creating auto-baton...")
@@ -913,3 +931,104 @@ def render_chat_panel(
                 show_error(f"Chat error: {str(e)}")
     elif send_button and not user_input.strip():
         show_warning("Please enter a message")
+
+    # Display detected node suggestions
+    _render_detected_nodes_ui(db, project.id)
+
+
+def _render_detected_nodes_ui(db: Session, project_id: int) -> None:
+    """
+    Render UI for detected node suggestions.
+
+    Shows a popup/expander when potential nodes are detected from chat.
+    Allows user to accept, edit, or dismiss detected nodes.
+
+    Args:
+        db: Database session
+        project_id: Current project ID
+    """
+    # Check if we have detected nodes for current project
+    if "detected_nodes" not in st.session_state:
+        return
+
+    if st.session_state.get("detected_nodes_project_id") != project_id:
+        return
+
+    detected_nodes = st.session_state.detected_nodes
+    if not detected_nodes:
+        return
+
+    # Show detected nodes in an expander (auto-expanded)
+    with st.expander("🔍 **Potential Nodes Detected!**", expanded=True):
+        st.markdown("The AI detected items that might be worth tracking as nodes:")
+
+        for idx, node in enumerate(detected_nodes):
+            icon = get_node_type_icon(node.suggested_type)
+            confidence_pct = int(node.confidence * 100)
+
+            col1, col2, col3 = st.columns([3, 1, 1])
+
+            with col1:
+                st.markdown(f"**{icon} {node.suggested_name}** ({node.suggested_type.value})")
+                st.caption(f"{node.suggested_description}")
+                st.caption(f"Confidence: {confidence_pct}% | *{node.reason}*")
+
+            with col2:
+                # Create node button
+                if st.button("✅ Create", key=f"create_node_{idx}", help="Create this node"):
+                    try:
+                        new_node = create_node(
+                            db=db,
+                            project_id=project_id,
+                            name=node.suggested_name,
+                            node_type=node.suggested_type,
+                            description=node.suggested_description,
+                            status=NodeStatus.DRAFT
+                        )
+                        show_success(f"Created node: {node.suggested_name}")
+                        # Remove this node from the list
+                        st.session_state.detected_nodes = [
+                            n for i, n in enumerate(detected_nodes) if i != idx
+                        ]
+                        st.rerun()
+                    except Exception as e:
+                        show_error(f"Failed to create node: {str(e)}")
+
+            with col3:
+                # Dismiss button
+                if st.button("❌ Skip", key=f"dismiss_node_{idx}", help="Dismiss this suggestion"):
+                    # Remove this node from the list
+                    st.session_state.detected_nodes = [
+                        n for i, n in enumerate(detected_nodes) if i != idx
+                    ]
+                    st.rerun()
+
+            st.divider()
+
+        # Dismiss all button
+        col1, col2, col3 = st.columns([1, 1, 2])
+        with col1:
+            if st.button("✅ Create All", help="Create all suggested nodes"):
+                created_count = 0
+                for node in detected_nodes:
+                    try:
+                        create_node(
+                            db=db,
+                            project_id=project_id,
+                            name=node.suggested_name,
+                            node_type=node.suggested_type,
+                            description=node.suggested_description,
+                            status=NodeStatus.DRAFT
+                        )
+                        created_count += 1
+                    except Exception as e:
+                        show_warning(f"Could not create '{node.suggested_name}': {str(e)}")
+                if created_count > 0:
+                    show_success(f"Created {created_count} nodes!")
+                st.session_state.detected_nodes = []
+                st.rerun()
+
+        with col2:
+            if st.button("❌ Dismiss All", help="Dismiss all suggestions"):
+                st.session_state.detected_nodes = []
+                st.rerun()

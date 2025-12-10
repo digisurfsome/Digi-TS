@@ -79,6 +79,14 @@ from app.services.process_log import (
     render_process_log,
 )
 
+from app.services.node_detector import (
+    detect_nodes_from_exchange,
+    DetectedNode,
+    get_node_type_icon,
+    format_detected_node_summary,
+    get_node_definition_doc,
+)
+
 __all__ = [
     # User service
     "get_or_create_default_user",
@@ -141,4 +149,10 @@ __all__ = [
     "ProcessLog",
     "LogLevel",
     "render_process_log",
+    # Node detector service
+    "detect_nodes_from_exchange",
+    "DetectedNode",
+    "get_node_type_icon",
+    "format_detected_node_summary",
+    "get_node_definition_doc",
 ]

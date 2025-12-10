@@ -128,7 +128,7 @@ This Truth Doc was automatically generated from Design Tree Studio.
 - **Project**: {project.name}
 - **Export Date**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 - **Total Components**: {len(nodes)}
-- **Domains**: {len(nodes_by_domain)}
+- **Types**: {len(nodes_by_type)}
 
 ---
 
