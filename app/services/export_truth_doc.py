@@ -75,32 +75,32 @@ def export_truth_doc(
     if not include_archived:
         query = query.filter(Node.status != NodeStatus.DELETED)
 
-    nodes = query.order_by(Node.domain, Node.title).all()
+    nodes = query.order_by(Node.node_type, Node.name).all()
 
     if not nodes:
         doc += "## Components\n\n*No components in this project yet.*\n\n"
         return doc
 
-    # Group nodes by domain
-    nodes_by_domain = {}
+    # Group nodes by type
+    nodes_by_type = {}
     for node in nodes:
-        domain = node.domain or "Uncategorized"
-        if domain not in nodes_by_domain:
-            nodes_by_domain[domain] = []
-        nodes_by_domain[domain].append(node)
+        type_name = node.node_type.value.title() if node.node_type else "Uncategorized"
+        if type_name not in nodes_by_type:
+            nodes_by_type[type_name] = []
+        nodes_by_type[type_name].append(node)
 
     # Add component index
     doc += "## Component Index\n\n"
     doc += f"**Total Components**: {len(nodes)}\n\n"
 
-    for domain in sorted(nodes_by_domain.keys()):
-        domain_nodes = nodes_by_domain[domain]
-        doc += f"### {domain} ({len(domain_nodes)})\n\n"
+    for type_name in sorted(nodes_by_type.keys()):
+        type_nodes = nodes_by_type[type_name]
+        doc += f"### {type_name} ({len(type_nodes)})\n\n"
 
-        for node in domain_nodes:
+        for node in type_nodes:
             status_badge = _get_status_badge(node.status)
             type_icon = _get_type_icon(node.node_type)
-            doc += f"- {type_icon} **{node.title}** {status_badge}\n"
+            doc += f"- {type_icon} **{node.name}** {status_badge}\n"
 
         doc += "\n"
 
@@ -109,12 +109,12 @@ def export_truth_doc(
     # Add detailed component sections
     doc += "## Components\n\n"
 
-    for domain in sorted(nodes_by_domain.keys()):
-        domain_nodes = nodes_by_domain[domain]
+    for type_name in sorted(nodes_by_type.keys()):
+        type_nodes = nodes_by_type[type_name]
 
-        doc += f"## Domain: {domain}\n\n"
+        doc += f"## Type: {type_name}\n\n"
 
-        for node in domain_nodes:
+        for node in type_nodes:
             doc += _generate_node_section(db, node)
             doc += "\n"
 
@@ -152,12 +152,14 @@ def _generate_node_section(db: Session, node: Node) -> str:
     status_badge = _get_status_badge(node.status)
     type_icon = _get_type_icon(node.node_type)
 
-    section = f"### {type_icon} {node.title} {status_badge}\n\n"
+    section = f"### {type_icon} {node.name} {status_badge}\n\n"
 
     # Node metadata
     section += f"**Type**: {node.node_type.value.title()}\n\n"
     section += f"**Status**: {node.status.value.title()}\n\n"
-    section += f"**Domain**: {node.domain}\n\n"
+
+    if node.description:
+        section += f"**Description**: {node.description}\n\n"
 
     # Get all versions ordered by version number descending
     versions = db.query(NodeVersion).filter(
@@ -171,19 +173,22 @@ def _generate_node_section(db: Session, node: Node) -> str:
     # Current version (detailed)
     current_version = None
     for v in versions:
-        if v.version_number == node.current_version_number:
+        if v.id == node.current_version_id:
             current_version = v
             break
 
+    # If no current version ID set, use the latest
+    if not current_version and versions:
+        current_version = versions[0]
+
     if current_version:
         section += f"#### Current Version: v{current_version.version_number}\n\n"
-        section += f"**Summary**: {current_version.summary}\n\n"
 
-        if current_version.details:
-            section += f"**Details**:\n\n{current_version.details}\n\n"
+        if current_version.change_summary:
+            section += f"**Summary**: {current_version.change_summary}\n\n"
 
-        if current_version.change_note:
-            section += f"*Change Note*: {current_version.change_note}\n\n"
+        if current_version.content:
+            section += f"**Content**:\n\n{current_version.content}\n\n"
 
         section += f"*Last Updated*: {current_version.created_at.strftime('%Y-%m-%d %H:%M')}\n\n"
 
@@ -192,21 +197,20 @@ def _generate_node_section(db: Session, node: Node) -> str:
         section += "#### Version History\n\n"
 
         for version in versions:
-            if version.version_number == node.current_version_number:
+            if current_version and version.id == current_version.id:
                 continue  # Skip current version, already shown
 
             section += f"**v{version.version_number}** - {version.created_at.strftime('%Y-%m-%d %H:%M')}\n\n"
-            section += f"- Summary: {version.summary}\n"
 
-            if version.change_note:
-                section += f"- Change: {version.change_note}\n"
+            if version.change_summary:
+                section += f"- Summary: {version.change_summary}\n"
 
-            if version.details:
-                # Show abbreviated details for older versions
-                details_preview = version.details[:150].replace('\n', ' ')
-                if len(version.details) > 150:
-                    details_preview += "..."
-                section += f"- Details: {details_preview}\n"
+            if version.content:
+                # Show abbreviated content for older versions
+                content_preview = version.content[:150].replace('\n', ' ')
+                if len(version.content) > 150:
+                    content_preview += "..."
+                section += f"- Content: {content_preview}\n"
 
             section += "\n"
 

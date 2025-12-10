@@ -53,7 +53,7 @@ def generate_auto_project_description(
     nodes = db.query(Node).filter(
         Node.project_id == project_id,
         Node.status.in_([NodeStatus.ACTIVE, NodeStatus.DRAFT])
-    ).order_by(Node.domain, Node.title).all()
+    ).order_by(Node.node_type, Node.name).all()
 
     # Build comprehensive project overview
     project_overview = f"""# Project: {project.name}
@@ -70,43 +70,44 @@ def generate_auto_project_description(
 {context.content}
 """
 
-    # Group nodes by domain
-    nodes_by_domain = {}
+    # Group nodes by type
+    nodes_by_type = {}
     for node in nodes:
-        domain = node.domain or "Uncategorized"
-        if domain not in nodes_by_domain:
-            nodes_by_domain[domain] = []
-        nodes_by_domain[domain].append(node)
+        type_name = node.node_type.value.title() if node.node_type else "Uncategorized"
+        if type_name not in nodes_by_type:
+            nodes_by_type[type_name] = []
+        nodes_by_type[type_name].append(node)
 
     # Add nodes information
     project_overview += f"""
 ## Project Structure
 Total Components: {len(nodes)}
-Domains: {len(nodes_by_domain)}
+Types: {len(nodes_by_type)}
 
-### Components by Domain
+### Components by Type
 """
 
-    for domain, domain_nodes in sorted(nodes_by_domain.items()):
-        project_overview += f"\n#### {domain} ({len(domain_nodes)} components)\n"
-        for node in domain_nodes:
+    for type_name, type_nodes in sorted(nodes_by_type.items()):
+        project_overview += f"\n#### {type_name} ({len(type_nodes)} components)\n"
+        for node in type_nodes:
             # Get current version
             current_version = db.query(NodeVersion).filter(
                 NodeVersion.node_id == node.id,
-                NodeVersion.version_number == node.current_version_number
+                NodeVersion.id == node.current_version_id
             ).first()
 
             status_marker = "🟡" if node.status == NodeStatus.DRAFT else "🟢"
-            project_overview += f"\n**{status_marker} {node.title}** ({node.node_type.value})\n"
+            project_overview += f"\n**{status_marker} {node.name}** ({node.node_type.value})\n"
 
-            if current_version:
-                project_overview += f"- Summary: {current_version.summary}\n"
-                if current_version.details:
-                    # Include first 200 chars of details
-                    details_preview = current_version.details[:200].replace('\n', ' ')
-                    if len(current_version.details) > 200:
-                        details_preview += "..."
-                    project_overview += f"- Details: {details_preview}\n"
+            if node.description:
+                project_overview += f"- Description: {node.description}\n"
+
+            if current_version and current_version.content:
+                # Include first 200 chars of content
+                content_preview = current_version.content[:200].replace('\n', ' ')
+                if len(current_version.content) > 200:
+                    content_preview += "..."
+                project_overview += f"- Content: {content_preview}\n"
 
     # Get OpenAI settings
     api_key = settings.get("OPENAI_API_KEY") or app_settings.OPENAI_API_KEY

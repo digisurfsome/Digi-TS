@@ -58,23 +58,23 @@ def render_node_list(
     on_select_callback=None
 ):
     """
-    Render the node list grouped by domain.
+    Render the node list grouped by type.
 
     Args:
         db: Database session
         project: Current project
         on_select_callback: Optional callback when node is selected
     """
-    st.subheader("📂 Nodes by Domain")
+    st.subheader("📂 Nodes by Type")
 
     # Search/filter input (Phase 8)
     search_query = st.text_input(
         "🔍 Search nodes",
-        placeholder="Filter by title or domain...",
+        placeholder="Filter by name...",
         key="node_search_filter"
     )
 
-    # Get nodes grouped by domain
+    # Get nodes grouped by type
     domains = get_nodes_by_domain(db, project.id, include_deleted=False)
 
     if not domains:
@@ -86,10 +86,10 @@ def render_node_list(
         search_lower = search_query.lower()
         filtered_domains = {}
         for domain, nodes in domains.items():
-            # Filter nodes that match title or domain
+            # Filter nodes that match name
             filtered_nodes = [
                 node for node in nodes
-                if search_lower in node.title.lower() or search_lower in (node.domain or "").lower()
+                if search_lower in node.name.lower()
             ]
             if filtered_nodes:
                 filtered_domains[domain] = filtered_nodes
@@ -99,15 +99,15 @@ def render_node_list(
             st.info(f"No nodes found matching '{search_query}'")
             return
 
-    # Render each domain
+    # Render each type group
     for domain, nodes in sorted(domains.items()):
-        with st.expander(f"**{domain}** ({len(nodes)} nodes)", expanded=True):
+        with st.expander(f"**{domain.title()}** ({len(nodes)} nodes)", expanded=True):
             for node in nodes:
                 col1, col2, col3 = st.columns([3, 2, 1])
 
                 with col1:
                     st.markdown(
-                        f"{get_type_icon(node.node_type)} **{node.title}**"
+                        f"{get_type_icon(node.node_type)} **{node.name}**"
                     )
 
                 with col2:
@@ -131,8 +131,7 @@ def render_create_node_form(db: Session, project: Project):
     st.subheader("➕ Create New Node")
 
     with st.form("create_node_form"):
-        title = st.text_input("Title", placeholder="e.g., User Authentication Module")
-        domain = st.text_input("Domain", placeholder="e.g., Backend, Frontend, Design")
+        name = st.text_input("Name", placeholder="e.g., User Authentication Module")
 
         node_type = st.selectbox(
             "Type",
@@ -140,8 +139,8 @@ def render_create_node_form(db: Session, project: Project):
             format_func=lambda x: f"{get_type_icon(NodeType(x))} {x.title()}"
         )
 
-        initial_content = st.text_area(
-            "Initial Content",
+        description = st.text_area(
+            "Description",
             placeholder="Add initial notes, requirements, or design thoughts...",
             height=150
         )
@@ -155,20 +154,19 @@ def render_create_node_form(db: Session, project: Project):
         submit = st.form_submit_button("Create Node", type="primary")
 
         if submit:
-            if not title or not domain:
-                show_error("Title and Domain are required")
+            if not name:
+                show_error("Name is required")
             else:
                 try:
                     node = create_node(
                         db=db,
                         project_id=project.id,
-                        title=title,
-                        domain=domain,
+                        name=name,
                         node_type=NodeType(node_type),
                         status=NodeStatus(status),
-                        initial_content=initial_content
+                        description=description
                     )
-                    show_success(f"Node '{node.title}' created successfully!")
+                    show_success(f"Node '{node.name}' created successfully!")
                     st.rerun()
                 except Exception as e:
                     show_error(f"Failed to create node: {str(e)}")
@@ -187,18 +185,19 @@ def render_node_editor(db: Session, node_id: int):
         show_error("Node not found")
         return
 
-    st.subheader(f"{get_type_icon(node.node_type)} {node.title}")
+    st.subheader(f"{get_type_icon(node.node_type)} {node.name}")
 
     # Node info and actions
     col1, col2, col3 = st.columns([2, 2, 2])
 
     with col1:
-        st.markdown(f"**Domain:** {node.domain}")
+        st.markdown(f"**Type:** {node.node_type.value.title()}")
         st.markdown(f"**Status:** {get_status_badge(node.status)}")
 
     with col2:
-        st.markdown(f"**Type:** {node.node_type.value.title()}")
-        st.markdown(f"**Current Version:** v{node.current_version_number}")
+        if node.description:
+            st.markdown(f"**Description:** {node.description[:100]}...")
+        st.markdown(f"**Version ID:** {node.current_version_id or 'None'}")
 
     with col3:
         # Status change buttons
@@ -318,8 +317,8 @@ def render_edit_node_basic_info(db: Session, node_id: int):
 
     with st.expander("✏️ Edit Node Info"):
         with st.form(f"edit_node_info_{node.id}"):
-            new_title = st.text_input("Title", value=node.title)
-            new_domain = st.text_input("Domain", value=node.domain)
+            new_name = st.text_input("Name", value=node.name)
+            new_description = st.text_area("Description", value=node.description or "")
 
             submit = st.form_submit_button("Update Info")
 
@@ -328,8 +327,8 @@ def render_edit_node_basic_info(db: Session, node_id: int):
                     update_node_basic_info(
                         db=db,
                         node_id=node.id,
-                        title=new_title,
-                        domain=new_domain
+                        name=new_name,
+                        description=new_description
                     )
                     show_success("Node info updated!")
                     st.rerun()
@@ -357,7 +356,7 @@ def render_drafts_tab(db: Session, project: Project):
 
     for draft in drafts:
         with st.expander(
-            f"{get_type_icon(draft.node_type)} **{draft.title}** ({draft.domain})"
+            f"{get_type_icon(draft.node_type)} **{draft.name}** ({draft.node_type.value})"
         ):
             current_version = get_node_current_version(db, draft.id)
 
@@ -371,7 +370,7 @@ def render_drafts_tab(db: Session, project: Project):
                 if st.button("✅ Commit", key=f"commit_draft_{draft.id}"):
                     try:
                         commit_draft_node(db, draft.id)
-                        show_success(f"'{draft.title}' committed to active!")
+                        show_success(f"'{draft.name}' committed to active!")
                         st.rerun()
                     except Exception as e:
                         show_error(f"Failed to commit: {str(e)}")
@@ -476,7 +475,7 @@ def render_rant_summary_tab(db: Session, project: Project):
 
             if all_nodes:
                 node_options = {
-                    f"{node.domain} / {node.title}": node.id
+                    f"{node.node_type.value} / {node.name}": node.id
                     for node in all_nodes
                 }
 
@@ -515,14 +514,9 @@ def render_rant_summary_tab(db: Session, project: Project):
         # Option 2: Create new node
         with st.expander("➕ Create New Node from Summary"):
             with st.form("create_from_rant"):
-                new_title = st.text_input(
-                    "Node Title",
+                new_name = st.text_input(
+                    "Node Name",
                     placeholder="e.g., API Rate Limiting Strategy"
-                )
-
-                new_domain = st.text_input(
-                    "Domain",
-                    placeholder="e.g., Backend, Architecture"
                 )
 
                 new_type = st.selectbox(
@@ -540,21 +534,20 @@ def render_rant_summary_tab(db: Session, project: Project):
                 submit_new = st.form_submit_button("Create Node", type="primary")
 
                 if submit_new:
-                    if not new_title or not new_domain:
-                        show_error("Title and Domain are required")
+                    if not new_name:
+                        show_error("Name is required")
                     else:
                         try:
                             node = create_node_from_summary(
                                 db=db,
                                 project_id=project.id,
-                                title=new_title,
-                                domain=new_domain,
+                                name=new_name,
                                 summary=edited_summary,
                                 details=edited_details,
                                 node_type=NodeType(new_type),
                                 status=NodeStatus(new_status)
                             )
-                            show_success(f"Node '{node.title}' created from summary!")
+                            show_success(f"Node '{node.name}' created from summary!")
                             # Clear session state
                             del st.session_state.rant_summary
                             del st.session_state.rant_details

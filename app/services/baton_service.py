@@ -59,18 +59,16 @@ def _gather_project_state(
         # Get current version
         current_version = db.query(NodeVersion).filter(
             NodeVersion.node_id == node.id,
-            NodeVersion.version_number == node.current_version_number
+            NodeVersion.id == node.current_version_id
         ).first()
 
         nodes_data.append({
             "id": node.id,
-            "title": node.title,
-            "domain": node.domain,
+            "name": node.name,
             "type": node.node_type.value,
             "status": node.status.value,
-            "current_version": node.current_version_number,
-            "summary": current_version.summary if current_version else None,
-            "details": current_version.details if current_version else None,
+            "description": node.description,
+            "content": current_version.content if current_version else None,
         })
 
     # Get recent node version changes (last 10)
@@ -83,10 +81,9 @@ def _gather_project_state(
         node = db.query(Node).filter(Node.id == version.node_id).first()
         if node:
             recent_changes.append({
-                "node_title": node.title,
+                "node_name": node.name,
                 "version_number": version.version_number,
-                "summary": version.summary,
-                "change_note": version.change_note,
+                "change_summary": version.change_summary,
                 "created_at": version.created_at.isoformat(),
             })
 
@@ -100,13 +97,13 @@ def _gather_project_state(
     for draft in drafts:
         current_version = db.query(NodeVersion).filter(
             NodeVersion.node_id == draft.id,
-            NodeVersion.version_number == draft.current_version_number
+            NodeVersion.id == draft.current_version_id
         ).first()
 
         drafts_data.append({
-            "title": draft.title,
-            "domain": draft.domain,
-            "summary": current_version.summary if current_version else None,
+            "name": draft.name,
+            "type": draft.node_type.value,
+            "description": draft.description,
         })
 
     return {

@@ -34,7 +34,7 @@ def list_project_nodes(
     if not include_deleted:
         query = query.filter(Node.status != NodeStatus.DELETED)
 
-    return query.order_by(Node.domain, Node.title).all()
+    return query.order_by(Node.node_type, Node.name).all()
 
 
 def get_nodes_by_domain(
@@ -43,7 +43,7 @@ def get_nodes_by_domain(
     include_deleted: bool = False
 ) -> Dict[str, List[Node]]:
     """
-    Get nodes grouped by domain.
+    Get nodes grouped by node_type (acting as domain).
 
     Args:
         db: Database session
@@ -51,13 +51,14 @@ def get_nodes_by_domain(
         include_deleted: Whether to include deleted nodes
 
     Returns:
-        Dictionary mapping domain names to lists of nodes
+        Dictionary mapping node types to lists of nodes
     """
     nodes = list_project_nodes(db, project_id, include_deleted)
 
     domains: Dict[str, List[Node]] = {}
     for node in nodes:
-        domain = node.domain or "Uncategorized"
+        # Use node_type as the grouping (domain)
+        domain = node.node_type.value if node.node_type else "Uncategorized"
         if domain not in domains:
             domains[domain] = []
         domains[domain].append(node)
@@ -99,12 +100,11 @@ def get_node_by_id(db: Session, node_id: int) -> Optional[Node]:
 def create_node(
     db: Session,
     project_id: int,
-    title: str,
-    domain: str,
+    name: str,
     node_type: NodeType = NodeType.COMPONENT,
     parent_id: Optional[int] = None,
     status: NodeStatus = NodeStatus.DRAFT,
-    initial_content: str = ""
+    description: str = ""
 ) -> Node:
     """
     Create a new node with initial version.
@@ -112,12 +112,11 @@ def create_node(
     Args:
         db: Database session
         project_id: Project ID
-        title: Node title
-        domain: Domain/category
+        name: Node name
         node_type: Type of node
         parent_id: Parent node ID (optional)
         status: Initial status
-        initial_content: Initial content for first version
+        description: Node description
 
     Returns:
         Created Node object
@@ -125,12 +124,11 @@ def create_node(
     # Create node
     node = Node(
         project_id=project_id,
-        title=title,
-        domain=domain,
+        name=name,
         node_type=node_type,
         parent_id=parent_id,
         status=status,
-        current_version_number=1
+        description=description
     )
     db.add(node)
     db.flush()  # Get node.id
@@ -139,11 +137,13 @@ def create_node(
     version = NodeVersion(
         node_id=node.id,
         version_number=1,
-        summary=f"Initial version of {title}",
-        details=initial_content,
-        change_note="Initial creation"
+        content=description,
+        change_summary="Initial creation"
     )
     db.add(version)
+
+    # Link the version to the node
+    node.current_version_id = version.id
 
     db.commit()
     db.refresh(node)
@@ -268,8 +268,8 @@ def update_node_status(
 def update_node_basic_info(
     db: Session,
     node_id: int,
-    title: Optional[str] = None,
-    domain: Optional[str] = None
+    name: Optional[str] = None,
+    description: Optional[str] = None
 ) -> Node:
     """
     Update node's basic information.
@@ -277,8 +277,8 @@ def update_node_basic_info(
     Args:
         db: Database session
         node_id: Node ID
-        title: New title (optional)
-        domain: New domain (optional)
+        name: New name (optional)
+        description: New description (optional)
 
     Returns:
         Updated Node object
@@ -287,10 +287,10 @@ def update_node_basic_info(
     if not node:
         raise ValueError(f"Node {node_id} not found")
 
-    if title is not None:
-        node.title = title
-    if domain is not None:
-        node.domain = domain
+    if name is not None:
+        node.name = name
+    if description is not None:
+        node.description = description
 
     db.commit()
     db.refresh(node)
@@ -437,8 +437,7 @@ def attach_summary_to_node(
 def create_node_from_summary(
     db: Session,
     project_id: int,
-    title: str,
-    domain: str,
+    name: str,
     summary: str,
     details: str,
     node_type: NodeType = NodeType.COMPONENT,
@@ -450,8 +449,7 @@ def create_node_from_summary(
     Args:
         db: Database session
         project_id: Project ID
-        title: Node title
-        domain: Domain/category
+        name: Node name
         summary: Summary text
         details: Detailed content
         node_type: Type of node
@@ -463,11 +461,10 @@ def create_node_from_summary(
     # Create node
     node = Node(
         project_id=project_id,
-        title=title,
-        domain=domain,
+        name=name,
         node_type=node_type,
         status=status,
-        current_version_number=1
+        description=summary
     )
     db.add(node)
     db.flush()
@@ -476,11 +473,13 @@ def create_node_from_summary(
     version = NodeVersion(
         node_id=node.id,
         version_number=1,
-        summary=summary,
-        details=details,
-        change_note="Created from rant summary"
+        content=details,
+        change_summary="Created from rant summary"
     )
     db.add(version)
+
+    # Link version to node
+    node.current_version_id = version.id
 
     db.commit()
     db.refresh(node)
