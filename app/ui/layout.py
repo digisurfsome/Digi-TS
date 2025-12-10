@@ -834,29 +834,26 @@ def render_chat_panel(
 
     st.divider()
 
-    # Input area
-    col1, col2 = st.columns([3, 1])
+    # Input area - use text_area for larger input
+    user_input = st.text_area(
+        "Message",
+        key="chat_input",
+        placeholder="Type your message...",
+        label_visibility="collapsed",
+        height=100
+    )
 
-    with col1:
-        user_input = st.text_input(
-            "Message",
-            key="chat_input",
-            placeholder="Type your message...",
-            label_visibility="collapsed"
-        )
-
-    with col2:
-        send_button = st.button("📤 Send", type="primary", use_container_width=True)
-
-    # Clear chat button and Baton button
     col1, col2, col3 = st.columns([1, 1, 2])
 
     with col1:
+        send_button = st.button("📤 Send", type="primary", use_container_width=True)
+
+    with col2:
         if st.button("🗑️ Clear", help="Clear chat history"):
             clear_chat_history(db, chat_session.id)
             st.rerun()
 
-    with col2:
+    with col3:
         baton_button = st.button("🎯 Baton Now", help="Create a new warmed session with project snapshot")
 
     # Manual baton creation
