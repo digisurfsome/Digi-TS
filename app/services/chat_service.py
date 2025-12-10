@@ -8,10 +8,12 @@ from typing import Optional, List, Tuple, Dict
 from sqlalchemy.orm import Session
 from openai import OpenAI
 import os
+import time
 
 from app.core.models import ChatSession, ChatMessage, MessageRole, Project
 from app.core.repositories import BaseRepository
 from app.config.settings import settings as app_settings
+from app.services.process_log import ProcessLog
 
 
 def get_or_create_chat_session(
@@ -151,10 +153,18 @@ def send_chat_message(
     # Get API key
     api_key = openai_api_key or app_settings.OPENAI_API_KEY
     if not api_key:
+        ProcessLog.error("Chat", "No OpenAI API key configured")
         raise ValueError("OpenAI API key not configured. Please set it in Settings or environment.")
 
     # Call OpenAI API
     try:
+        ProcessLog.info("Chat", f"Sending message to {chat_model}", details={
+            "model": chat_model,
+            "message_count": len(messages),
+            "user_message_length": len(user_text)
+        })
+
+        start_time = time.time()
         client = OpenAI(api_key=api_key)
 
         response = client.chat.completions.create(
@@ -162,12 +172,20 @@ def send_chat_message(
             messages=messages,
             temperature=0.7
         )
+        duration_ms = (time.time() - start_time) * 1000
 
         # Extract response
         assistant_content = response.choices[0].message.content
         prompt_tokens = response.usage.prompt_tokens
         completion_tokens = response.usage.completion_tokens
         total_tokens = response.usage.total_tokens
+
+        ProcessLog.success("Chat", f"Received response from {chat_model}", details={
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "response_length": len(assistant_content)
+        }, duration_ms=duration_ms)
 
         # Create assistant message
         assistant_message = ChatMessage(
@@ -190,6 +208,7 @@ def send_chat_message(
         return user_message, assistant_message
 
     except Exception as e:
+        ProcessLog.error("Chat", f"OpenAI API error: {str(e)}", details={"error": str(e)})
         db.rollback()
         raise Exception(f"OpenAI API error: {str(e)}")
 

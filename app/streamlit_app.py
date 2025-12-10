@@ -134,18 +134,39 @@ def render_system_status():
     """Render the system status tab."""
     st.header("System Status")
 
-    # Check configuration
+    # Check configuration - now checks both env vars AND database settings
     st.subheader("Configuration Status")
-    is_valid, errors = settings.validate()
 
-    if is_valid:
+    # Get database API key if available
+    db_openai_key = ""
+    openai_source = None
+    try:
+        with get_db() as db:
+            from app.services import get_setting
+            db_openai_key = get_setting(db, "OPENAI_API_KEY") or ""
+    except Exception:
+        pass
+
+    # Determine OpenAI key source
+    if settings.OPENAI_API_KEY:
+        openai_source = "environment"
+    elif db_openai_key:
+        openai_source = "database"
+
+    # Check if all required config is present
+    has_openai_key = bool(settings.OPENAI_API_KEY) or bool(db_openai_key)
+    has_database = bool(settings.DATABASE_URL)
+
+    if has_database and has_openai_key:
         show_success("All required configuration is present")
     else:
         show_error("Configuration incomplete")
-        for error in errors:
-            st.markdown(f"- {error}")
+        if not has_database:
+            st.markdown("- DATABASE_URL is not configured")
+        if not has_openai_key:
+            st.markdown("- OPENAI_API_KEY is not configured (set in Settings tab or environment)")
         show_warning(
-            "Please create a `.env` file in the project root with the required variables. "
+            "Please configure the required variables in Settings tab or environment. "
             "See `.env.example` for reference."
         )
 
@@ -235,11 +256,26 @@ OPENAI_API_KEY=sk-...
 
     # OpenAI configuration status
     st.subheader("OpenAI Configuration")
+
+    # Re-check database for OpenAI key (in case it was updated)
+    db_key_check = ""
+    db_model = ""
+    try:
+        with get_db() as db:
+            from app.services import get_setting
+            db_key_check = get_setting(db, "OPENAI_API_KEY") or ""
+            db_model = get_setting(db, "DEFAULT_CHAT_MODEL") or settings.OPENAI_MODEL
+    except Exception:
+        db_model = settings.OPENAI_MODEL
+
     if settings.OPENAI_API_KEY:
-        show_success("OpenAI API key is configured")
+        show_success("OpenAI API key is configured (from environment)")
         st.info(f"Using model: {settings.OPENAI_MODEL}")
+    elif db_key_check:
+        show_success("OpenAI API key is configured (from Settings)")
+        st.info(f"Using model: {db_model}")
     else:
-        show_warning("OpenAI API key not configured")
+        show_warning("OpenAI API key not configured - set it in the Settings tab")
 
     # Development info
     if settings.DEBUG:
@@ -407,8 +443,8 @@ def main():
 
     # Right column: Tabs
     with main_col:
-        tab1, tab2, tab3, tab4, tab5 = st.tabs(
-            ["🏠 System Status", "⚙️ Settings", "📋 Project Context", "🎨 Design Tree", "📄 Truth Doc"]
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
+            ["🏠 System Status", "⚙️ Settings", "📋 Project Context", "🎨 Design Tree", "📄 Truth Doc", "📊 Process Log"]
         )
 
         with tab1:
@@ -459,6 +495,10 @@ def main():
                         show_error("⚠️ Selected project not found. Please select a project from the sidebar.")
             else:
                 st.info("📁 **No Project Selected**\n\nPlease select or create a project in the left sidebar to export Truth Doc.")
+
+        with tab6:
+            from app.services import render_process_log
+            render_process_log()
 
     # Render footer
     render_footer()

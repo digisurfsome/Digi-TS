@@ -6,6 +6,7 @@ Provides SQLAlchemy engine and session factory for database operations.
 
 from contextlib import contextmanager
 from typing import Generator
+import time
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session, declarative_base
@@ -87,6 +88,15 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
+def _log(level: str, category: str, message: str, **kwargs) -> None:
+    """Safely log to ProcessLog if available."""
+    try:
+        from app.services.process_log import ProcessLog
+        getattr(ProcessLog, level)(category, message, **kwargs)
+    except Exception:
+        pass  # Silently ignore if ProcessLog not available
+
+
 def test_connection() -> tuple[bool, str]:
     """
     Test the database connection.
@@ -95,12 +105,16 @@ def test_connection() -> tuple[bool, str]:
         Tuple of (success: bool, message: str)
     """
     try:
+        start_time = time.time()
         engine = get_engine()
         with engine.connect() as conn:
             result = conn.execute(text("SELECT 1"))
             result.fetchone()
+        duration_ms = (time.time() - start_time) * 1000
+        _log("success", "Database", "Connection test successful", duration_ms=duration_ms)
         return True, "Database connection successful!"
     except Exception as e:
+        _log("error", "Database", f"Connection test failed: {str(e)}")
         return False, f"Database connection failed: {str(e)}"
 
 
@@ -137,9 +151,14 @@ def initialize_schema() -> tuple[bool, str]:
         Tuple of (success: bool, message: str)
     """
     try:
+        _log("info", "Database", "Initializing database schema...")
+        start_time = time.time()
         create_tables()
+        duration_ms = (time.time() - start_time) * 1000
+        _log("success", "Database", "Schema initialized successfully", duration_ms=duration_ms)
         return True, "Database schema initialized successfully!"
     except Exception as e:
+        _log("error", "Database", f"Schema initialization failed: {str(e)}")
         return False, f"Failed to initialize schema: {str(e)}"
 
 

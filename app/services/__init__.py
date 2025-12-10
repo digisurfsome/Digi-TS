@@ -73,6 +73,12 @@ from app.services.export_truth_doc import (
     get_truth_doc_preview,
 )
 
+from app.services.process_log import (
+    ProcessLog,
+    LogLevel,
+    render_process_log,
+)
+
 __all__ = [
     # User service
     "get_or_create_default_user",
@@ -131,4 +137,8 @@ __all__ = [
     "export_truth_doc",
     "get_truth_doc_filename",
     "get_truth_doc_preview",
+    # Process log service
+    "ProcessLog",
+    "LogLevel",
+    "render_process_log",
 ]
