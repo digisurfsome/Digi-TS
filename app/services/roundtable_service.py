@@ -959,3 +959,495 @@ Please provide a detailed code review."""
             "passed": passed,
             "feedback": feedback,
         }
+
+    # =========================================================================
+    # Additional Round Methods
+    # =========================================================================
+
+    def list_rounds(self, session_id: int) -> List[RoundtableRound]:
+        """
+        List all rounds for a session.
+
+        Args:
+            session_id: Session ID
+
+        Returns:
+            List of RoundtableRound objects
+        """
+        return self.db.query(RoundtableRound).filter(
+            RoundtableRound.session_id == session_id
+        ).order_by(RoundtableRound.round_number).all()
+
+    def get_round_responses(self, round_id: int) -> Dict[str, Any]:
+        """
+        Get all responses for a round organized by role.
+
+        Args:
+            round_id: Round ID
+
+        Returns:
+            Dictionary with builder and voter responses
+        """
+        round_obj = self.get_round(round_id)
+        if not round_obj:
+            return {"builder": None, "voters": [], "reviewers": []}
+
+        builder_response = None
+        voter_responses = []
+        reviewer_responses = []
+
+        for agent in round_obj.agents:
+            # Get latest response for this agent
+            latest = self.db.query(RoundtableResponse).filter(
+                RoundtableResponse.agent_id == agent.id
+            ).order_by(desc(RoundtableResponse.iteration)).first()
+
+            if not latest:
+                continue
+
+            response_data = {
+                "agent": agent,
+                "response": latest,
+                "model": self.get_model_display_name(agent.model)
+            }
+
+            if agent.role == AgentRole.BUILDER:
+                builder_response = response_data
+            elif agent.role == AgentRole.VOTER:
+                voter_responses.append(response_data)
+            elif agent.role == AgentRole.REVIEWER:
+                reviewer_responses.append(response_data)
+
+        return {
+            "builder": builder_response,
+            "voters": voter_responses,
+            "reviewers": reviewer_responses
+        }
+
+    # =========================================================================
+    # Phase F: Baton Integration
+    # =========================================================================
+
+    def generate_roundtable_baton(self, session_id: int) -> str:
+        """
+        Generate a baton snapshot for a roundtable session.
+
+        Args:
+            session_id: Session ID
+
+        Returns:
+            Baton content as markdown string
+        """
+        session = self.get_session(session_id)
+        if not session:
+            return "Session not found"
+
+        rounds = self.list_rounds(session_id)
+
+        # Build context from all rounds and responses
+        context = f"# Roundtable Session: {session.name}\n\n"
+        context += f"**Execution Mode:** {session.execution_mode}\n"
+        context += f"**Voting Threshold:** {session.voting_threshold * 100:.0f}%\n"
+        context += f"**Status:** {session.status.value if hasattr(session.status, 'value') else session.status}\n\n"
+
+        if session.master_prompt:
+            context += f"## Master Prompt\n{session.master_prompt[:500]}...\n\n"
+
+        if session.master_guardrails:
+            context += f"## Guardrails\n{session.master_guardrails}\n\n"
+
+        context += "## Rounds\n\n"
+
+        for round_obj in rounds:
+            context += f"### Round {round_obj.round_number}: {round_obj.name}\n"
+            context += f"**Task:** {round_obj.task_prompt or 'No task specified'}\n"
+            context += f"**Status:** {round_obj.status}\n\n"
+
+            # Add responses
+            responses = self.get_round_responses(round_obj.id)
+
+            if responses["builder"] and responses["builder"]["response"]:
+                builder_resp = responses["builder"]["response"]
+                content_preview = builder_resp.content[:2000] if builder_resp.content else "No content"
+                context += f"#### Builder Response ({responses['builder']['model']})\n"
+                context += f"```\n{content_preview}\n```\n\n"
+
+            if responses["voters"]:
+                context += "#### Voter Responses\n"
+                for voter_data in responses["voters"]:
+                    voter_resp = voter_data["response"]
+                    vote_str = voter_resp.vote.value if voter_resp.vote else "No vote"
+                    context += f"- **{voter_data['model']}**: {vote_str}\n"
+                context += "\n"
+
+            # Add consensus info if available
+            if round_obj.consensus_reached is not None:
+                consensus_status = "✅ Reached" if round_obj.consensus_reached else "❌ Not reached"
+                context += f"**Consensus:** {consensus_status}"
+                if round_obj.consensus_percentage is not None:
+                    context += f" ({round_obj.consensus_percentage * 100:.0f}%)"
+                context += "\n\n"
+
+        context += f"\n---\n*Generated at: {datetime.utcnow().isoformat()}*\n"
+
+        return context
+
+    # =========================================================================
+    # Phase I: Audit & Statistics
+    # =========================================================================
+
+    def get_session_stats(self, session_id: int) -> Dict[str, Any]:
+        """
+        Get statistics for a session.
+
+        Args:
+            session_id: Session ID
+
+        Returns:
+            Dictionary with session statistics
+        """
+        session = self.get_session(session_id)
+        if not session:
+            return {}
+
+        rounds = self.list_rounds(session_id)
+
+        total_cost = 0.0
+        total_tokens_in = 0
+        total_tokens_out = 0
+        completed_rounds = 0
+        total_responses = 0
+
+        for round_obj in rounds:
+            if round_obj.status == "completed":
+                completed_rounds += 1
+
+            responses = self.get_round_responses(round_obj.id)
+
+            # Process builder response
+            if responses["builder"] and responses["builder"]["response"]:
+                r = responses["builder"]["response"]
+                total_cost += r.cost or 0
+                total_tokens_in += r.tokens_input or 0
+                total_tokens_out += r.tokens_output or 0
+                total_responses += 1
+
+            # Process voter responses
+            for voter_data in responses["voters"]:
+                if voter_data["response"]:
+                    r = voter_data["response"]
+                    total_cost += r.cost or 0
+                    total_tokens_in += r.tokens_input or 0
+                    total_tokens_out += r.tokens_output or 0
+                    total_responses += 1
+
+            # Process reviewer responses
+            for reviewer_data in responses["reviewers"]:
+                if reviewer_data["response"]:
+                    r = reviewer_data["response"]
+                    total_cost += r.cost or 0
+                    total_tokens_in += r.tokens_input or 0
+                    total_tokens_out += r.tokens_output or 0
+                    total_responses += 1
+
+        return {
+            "total_rounds": len(rounds),
+            "completed_rounds": completed_rounds,
+            "total_responses": total_responses,
+            "total_cost": total_cost,
+            "total_tokens_in": total_tokens_in,
+            "total_tokens_out": total_tokens_out,
+            "total_tokens": total_tokens_in + total_tokens_out,
+        }
+
+    def export_session(self, session_id: int) -> Dict[str, Any]:
+        """
+        Export entire session as JSON for backup/transfer.
+
+        Args:
+            session_id: Session ID
+
+        Returns:
+            Dictionary with full session data
+        """
+        session = self.get_session(session_id)
+        if not session:
+            return {}
+
+        rounds = self.list_rounds(session_id)
+        stats = self.get_session_stats(session_id)
+
+        rounds_data = []
+        for r in rounds:
+            responses = self.get_round_responses(r.id)
+            round_data = {
+                "round_number": r.round_number,
+                "name": r.name,
+                "task_prompt": r.task_prompt,
+                "status": r.status,
+                "consensus_reached": r.consensus_reached,
+                "consensus_percentage": r.consensus_percentage,
+                "responses": {
+                    "builder": None,
+                    "voters": [],
+                    "reviewers": []
+                }
+            }
+
+            if responses["builder"] and responses["builder"]["response"]:
+                br = responses["builder"]["response"]
+                round_data["responses"]["builder"] = {
+                    "model": responses["builder"]["model"],
+                    "content": br.content,
+                    "tokens_in": br.tokens_input,
+                    "tokens_out": br.tokens_output,
+                    "cost": br.cost
+                }
+
+            for v in responses["voters"]:
+                if v["response"]:
+                    vr = v["response"]
+                    round_data["responses"]["voters"].append({
+                        "model": v["model"],
+                        "vote": vr.vote.value if vr.vote else None,
+                        "vote_reason": vr.vote_reason,
+                        "content": vr.content
+                    })
+
+            for rv in responses["reviewers"]:
+                if rv["response"]:
+                    rvr = rv["response"]
+                    round_data["responses"]["reviewers"].append({
+                        "model": rv["model"],
+                        "content": rvr.content
+                    })
+
+            rounds_data.append(round_data)
+
+        return {
+            "exported_at": datetime.utcnow().isoformat(),
+            "session": {
+                "id": session.id,
+                "name": session.name,
+                "status": session.status.value if hasattr(session.status, 'value') else str(session.status),
+                "execution_mode": session.execution_mode,
+                "voting_threshold": session.voting_threshold,
+                "master_prompt": session.master_prompt,
+                "master_guardrails": session.master_guardrails,
+                "created_at": session.created_at.isoformat() if session.created_at else None,
+            },
+            "rounds": rounds_data,
+            "stats": stats
+        }
+
+
+# =============================================================================
+# Phase G: Prompt Presets
+# =============================================================================
+
+PROMPT_PRESETS = {
+    "coding": {
+        "name": "Coding",
+        "system": "You are an expert software developer. Write clean, well-documented code following best practices.",
+        "guardrails": "Always include error handling. Follow PEP8 for Python. Add type hints. Write docstrings for functions."
+    },
+    "review": {
+        "name": "Code Review",
+        "system": "You are a senior code reviewer. Analyze code for issues, improvements, and best practices.",
+        "guardrails": "Check for security issues, performance problems, code smells. Suggest specific improvements with examples."
+    },
+    "refactor": {
+        "name": "Refactoring",
+        "system": "You are a refactoring specialist. Improve code structure without changing behavior.",
+        "guardrails": "Maintain backward compatibility. Keep functions small and focused. Improve naming. Add tests if missing."
+    },
+    "debug": {
+        "name": "Debugging",
+        "system": "You are a debugging expert. Analyze code to find and fix bugs systematically.",
+        "guardrails": "Identify root cause before fixing. Explain the bug clearly. Provide test cases to verify the fix."
+    },
+    "architect": {
+        "name": "Architecture",
+        "system": "You are a software architect. Design scalable, maintainable system architectures.",
+        "guardrails": "Consider scalability, security, and maintainability. Document trade-offs. Follow SOLID principles."
+    }
+}
+
+
+# =============================================================================
+# Phase J: Testing System
+# =============================================================================
+
+class TestRunner:
+    """Test runner for validating code output from roundtable sessions."""
+
+    def run_tier1(self, code: str) -> Dict[str, Any]:
+        """
+        Tier 1: Syntax and compile checks.
+
+        Args:
+            code: Python code to check
+
+        Returns:
+            Dictionary with test results
+        """
+        results = {
+            "tier": 1,
+            "name": "Syntax Check",
+            "passed": True,
+            "errors": []
+        }
+
+        if not code or not code.strip():
+            results["passed"] = False
+            results["errors"].append("No code provided")
+            return results
+
+        # Extract Python code blocks if markdown
+        code_to_check = code
+        if "```python" in code:
+            import re
+            python_blocks = re.findall(r'```python\n(.*?)```', code, re.DOTALL)
+            if python_blocks:
+                code_to_check = "\n\n".join(python_blocks)
+        elif "```" in code:
+            import re
+            code_blocks = re.findall(r'```\n?(.*?)```', code, re.DOTALL)
+            if code_blocks:
+                code_to_check = "\n\n".join(code_blocks)
+
+        # Syntax check
+        try:
+            compile(code_to_check, "<string>", "exec")
+        except SyntaxError as e:
+            results["passed"] = False
+            results["errors"].append(f"Syntax error at line {e.lineno}: {e.msg}")
+
+        return results
+
+    def run_tier2(self) -> Dict[str, Any]:
+        """
+        Tier 2: App start test - verify the main app can be imported.
+
+        Returns:
+            Dictionary with test results
+        """
+        results = {
+            "tier": 2,
+            "name": "App Import Check",
+            "passed": True,
+            "errors": []
+        }
+
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["python", "-c", "from app.streamlit_app import main"],
+                capture_output=True,
+                timeout=30,
+                cwd="/home/user/design-tree-studio"
+            )
+            if result.returncode != 0:
+                results["passed"] = False
+                error_msg = result.stderr.decode()[:500] if result.stderr else "Unknown error"
+                results["errors"].append(f"Import failed: {error_msg}")
+        except subprocess.TimeoutExpired:
+            results["passed"] = False
+            results["errors"].append("Import check timed out (30s)")
+        except Exception as e:
+            results["passed"] = False
+            results["errors"].append(f"Test execution error: {str(e)}")
+
+        return results
+
+    def run_tier3_lint(self, code: str) -> Dict[str, Any]:
+        """
+        Tier 3: Basic linting checks.
+
+        Args:
+            code: Python code to lint
+
+        Returns:
+            Dictionary with test results
+        """
+        results = {
+            "tier": 3,
+            "name": "Lint Check",
+            "passed": True,
+            "errors": [],
+            "warnings": []
+        }
+
+        if not code:
+            return results
+
+        # Basic checks
+        lines = code.split('\n')
+
+        for i, line in enumerate(lines, 1):
+            # Check line length
+            if len(line) > 120:
+                results["warnings"].append(f"Line {i}: exceeds 120 characters ({len(line)})")
+
+            # Check for common issues
+            if "import *" in line:
+                results["warnings"].append(f"Line {i}: wildcard import detected")
+
+            if "eval(" in line or "exec(" in line:
+                results["warnings"].append(f"Line {i}: potentially unsafe eval/exec usage")
+
+        # Warnings don't fail the test, but multiple warnings is a concern
+        if len(results["warnings"]) > 10:
+            results["passed"] = False
+            results["errors"].append(f"Too many lint warnings ({len(results['warnings'])})")
+
+        return results
+
+    def run_all(self, code: str = None) -> List[Dict[str, Any]]:
+        """
+        Run all enabled test tiers.
+
+        Args:
+            code: Optional code to test (for tier 1 and 3)
+
+        Returns:
+            List of test result dictionaries
+        """
+        results = []
+
+        if code:
+            results.append(self.run_tier1(code))
+            results.append(self.run_tier3_lint(code))
+
+        results.append(self.run_tier2())
+
+        return results
+
+    def get_summary(self, results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Get summary of test results.
+
+        Args:
+            results: List of test results
+
+        Returns:
+            Summary dictionary
+        """
+        total = len(results)
+        passed = sum(1 for r in results if r["passed"])
+        failed = total - passed
+        all_errors = []
+        all_warnings = []
+
+        for r in results:
+            all_errors.extend(r.get("errors", []))
+            all_warnings.extend(r.get("warnings", []))
+
+        return {
+            "total_tests": total,
+            "passed": passed,
+            "failed": failed,
+            "all_passed": failed == 0,
+            "errors": all_errors,
+            "warnings": all_warnings
+        }

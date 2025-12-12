@@ -20,8 +20,12 @@ from app.services.roundtable_service import (
     RoundtableService,
     AVAILABLE_MODELS,
     AGENT_ROLES,
+    PROMPT_PRESETS,
+    TestRunner,
 )
+from app.services.github_service import GitHubService, validate_github_token
 from app.services import get_setting
+import json
 from app.ui.layout import show_success, show_error, show_warning, show_info
 
 
@@ -148,6 +152,9 @@ def render_roundtable_panel(db: Session, project_id: Optional[int] = None):
     st.divider()
     render_execution_section(service, session)
 
+    # Tools Section (Phases F, H, I)
+    render_tools_section(db, service, session)
+
 
 def render_session_settings(service: RoundtableService, session: RoundtableSession):
     """Render session settings section."""
@@ -195,18 +202,42 @@ def render_session_settings(service: RoundtableService, session: RoundtableSessi
         if session.execution_mode == "multi":
             st.caption(f"Requires {threshold}% approval to pass")
 
-    # Master Prompt (collapsible)
-    with st.expander("📝 Master Prompt & Guardrails"):
+    # Master Prompt with Presets (Phase G)
+    with st.expander("📝 Master Prompt & Guardrails", expanded=False):
+        # Prompt Preset Selector
+        preset_options = ["Custom"] + [p["name"] for p in PROMPT_PRESETS.values()]
+        preset = st.selectbox(
+            "Prompt Preset",
+            options=preset_options,
+            key=f"preset_{session.id}",
+            help="Select a preset to auto-fill system prompt and guardrails"
+        )
+
+        # Get current values
+        current_prompt = session.master_prompt or ""
+        current_guardrails = session.master_guardrails or ""
+
+        # Apply preset if selected
+        if preset != "Custom":
+            preset_key = preset.lower().replace(" ", "_").replace("code_", "")
+            for key, value in PROMPT_PRESETS.items():
+                if value["name"] == preset:
+                    preset_key = key
+                    break
+            if preset_key in PROMPT_PRESETS:
+                current_prompt = PROMPT_PRESETS[preset_key]["system"]
+                current_guardrails = PROMPT_PRESETS[preset_key]["guardrails"]
+
         master_prompt = st.text_area(
             "System Prompt (applies to all agents)",
-            value=session.master_prompt or "",
+            value=current_prompt,
             height=100,
             key=f"master_prompt_{session.id}"
         )
 
         guardrails = st.text_area(
             "Guardrails (restrictions/rules)",
-            value=session.master_guardrails or "",
+            value=current_guardrails,
             height=80,
             key=f"guardrails_{session.id}",
             placeholder="e.g., Never use eval(), always validate inputs..."
@@ -436,6 +467,12 @@ def render_execution_section(service: RoundtableService, session: RoundtableSess
     if selected_round.status == "completed":
         render_round_results(service, selected_round, session.execution_mode)
 
+        # Test runner (Phase J)
+        responses = service.get_round_responses(selected_round.id)
+        if responses["builder"] and responses["builder"]["response"]:
+            builder_content = responses["builder"]["response"].content
+            render_test_runner(builder_content, selected_round.id)
+
 
 def render_round_results(
     service: RoundtableService,
@@ -516,3 +553,274 @@ def render_round_results(
                 with st.expander("📝 Rejection Feedback"):
                     for fb in consensus["feedback"]:
                         st.markdown(f"- {fb[:500]}...")
+
+
+# =============================================================================
+# Phase F: Baton Integration
+# =============================================================================
+
+def render_baton_section(service: RoundtableService, session: RoundtableSession):
+    """Render baton generation section."""
+    st.markdown("### 📦 Baton Snapshot")
+    st.caption("Generate a context snapshot for session continuity")
+
+    col1, col2 = st.columns([1, 3])
+
+    with col1:
+        if st.button("Generate Baton", key="gen_baton_btn"):
+            with st.spinner("Generating baton snapshot..."):
+                baton_content = service.generate_roundtable_baton(session.id)
+                st.session_state[f"baton_content_{session.id}"] = baton_content
+                show_success("Baton generated!")
+
+    # Display baton content if generated
+    baton_key = f"baton_content_{session.id}"
+    if baton_key in st.session_state:
+        with st.expander("📄 Baton Content", expanded=True):
+            st.text_area(
+                "Copy this content for context persistence",
+                value=st.session_state[baton_key],
+                height=400,
+                key=f"baton_display_{session.id}"
+            )
+            if st.button("Clear Baton", key="clear_baton_btn"):
+                del st.session_state[baton_key]
+                st.rerun()
+
+
+# =============================================================================
+# Phase H: GitHub Integration
+# =============================================================================
+
+def render_github_section(db, service: RoundtableService, session: RoundtableSession):
+    """Render GitHub integration section."""
+    st.markdown("### 🐙 GitHub Integration")
+
+    # Get GitHub token from settings
+    github_token = get_setting(db, "GITHUB_TOKEN") or ""
+
+    with st.expander("GitHub Settings", expanded=False):
+        token_input = st.text_input(
+            "GitHub Token",
+            value=github_token,
+            type="password",
+            key="github_token_input",
+            help="Personal Access Token with repo permissions"
+        )
+
+        if token_input and token_input != github_token:
+            # Validate and save token
+            validation = validate_github_token(token_input)
+            if validation["valid"]:
+                show_success(f"Token valid for user: {validation['username']}")
+            else:
+                show_warning(f"Token validation failed: {validation['error']}")
+
+    if not github_token:
+        show_info("Add a GitHub token in settings to enable GitHub features.")
+        return
+
+    github = GitHubService(github_token)
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        repo = st.text_input(
+            "Repository",
+            placeholder="owner/repo",
+            key="github_repo",
+            help="Format: username/repository"
+        )
+
+    with col2:
+        branch = st.text_input(
+            "Branch",
+            value="main",
+            key="github_branch"
+        )
+
+    if repo:
+        # File browser
+        st.markdown("**Files:**")
+        path = st.text_input("Path", value="", key="github_path", placeholder="src/")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if st.button("List Files", key="list_files_btn"):
+                result = github.list_files(repo, path, branch)
+                if result["success"]:
+                    st.session_state["github_files"] = result["files"]
+                else:
+                    show_error(result["error"])
+
+        with col2:
+            if st.button("Fetch File", key="fetch_file_btn"):
+                if path:
+                    result = github.get_file_content(repo, path, branch)
+                    if result["success"]:
+                        st.session_state["github_file_content"] = result["content"]
+                        st.session_state["github_file_sha"] = result.get("sha")
+                        show_success(f"Fetched: {path}")
+                    else:
+                        show_error(result["error"])
+
+        # Display files list
+        if "github_files" in st.session_state:
+            files = st.session_state["github_files"]
+            for f in files[:20]:  # Limit display
+                icon = "📁" if f["type"] == "dir" else "📄"
+                st.text(f"{icon} {f['path']}")
+
+        # Display fetched file content
+        if "github_file_content" in st.session_state:
+            with st.expander("📄 File Content", expanded=True):
+                st.code(st.session_state["github_file_content"][:5000], language="python")
+
+        # PR Creation
+        st.markdown("---")
+        st.markdown("**Create Pull Request:**")
+
+        pr_title = st.text_input("PR Title", key="pr_title")
+        pr_body = st.text_area("PR Description", key="pr_body", height=100)
+        pr_head = st.text_input("Source Branch", key="pr_head", placeholder="feature-branch")
+        pr_base = st.text_input("Target Branch", value="main", key="pr_base")
+
+        if st.button("Create PR", key="create_pr_btn", type="primary"):
+            if pr_title and pr_head:
+                result = github.create_pr(repo, pr_title, pr_body, pr_head, pr_base)
+                if result["success"]:
+                    show_success(f"PR #{result['number']} created: {result['url']}")
+                else:
+                    show_error(result["error"])
+            else:
+                show_warning("Title and source branch are required")
+
+
+# =============================================================================
+# Phase I: Session Stats & Export
+# =============================================================================
+
+def render_session_stats(service: RoundtableService, session: RoundtableSession):
+    """Render session statistics section."""
+    st.markdown("### 📊 Session Statistics")
+
+    stats = service.get_session_stats(session.id)
+
+    if not stats:
+        st.caption("No statistics available yet.")
+        return
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.metric("Total Rounds", stats.get("total_rounds", 0))
+
+    with col2:
+        st.metric("Completed", stats.get("completed_rounds", 0))
+
+    with col3:
+        st.metric("Total Cost", f"${stats.get('total_cost', 0):.4f}")
+
+    with col4:
+        total_tokens = stats.get("total_tokens", 0)
+        st.metric("Total Tokens", f"{total_tokens:,}")
+
+    # Token breakdown
+    with st.expander("Token Details"):
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Input Tokens", f"{stats.get('total_tokens_in', 0):,}")
+        with col2:
+            st.metric("Output Tokens", f"{stats.get('total_tokens_out', 0):,}")
+        st.metric("Total Responses", stats.get("total_responses", 0))
+
+    # Export button
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        if st.button("📤 Export Session", key="export_session_btn"):
+            export_data = service.export_session(session.id)
+            st.session_state[f"export_data_{session.id}"] = export_data
+
+    export_key = f"export_data_{session.id}"
+    if export_key in st.session_state:
+        with st.expander("📄 Exported JSON", expanded=True):
+            st.json(st.session_state[export_key])
+            # Download button
+            json_str = json.dumps(st.session_state[export_key], indent=2)
+            st.download_button(
+                "Download JSON",
+                data=json_str,
+                file_name=f"roundtable_session_{session.id}.json",
+                mime="application/json"
+            )
+
+
+# =============================================================================
+# Phase J: Test Runner UI
+# =============================================================================
+
+def render_test_runner(builder_response: str, round_id: int):
+    """Render test runner section after round execution."""
+    st.markdown("### 🧪 Code Tests")
+
+    run_tests = st.checkbox(
+        "Run tests on builder output",
+        value=True,
+        key=f"run_tests_{round_id}"
+    )
+
+    if run_tests and builder_response:
+        if st.button("Run Tests", key=f"run_tests_btn_{round_id}"):
+            test_runner = TestRunner()
+            with st.spinner("Running tests..."):
+                results = test_runner.run_all(builder_response)
+                summary = test_runner.get_summary(results)
+
+            # Display results
+            for result in results:
+                tier = result["tier"]
+                name = result["name"]
+                passed = result["passed"]
+
+                if passed:
+                    st.success(f"✅ Tier {tier} ({name}): PASSED")
+                else:
+                    st.error(f"❌ Tier {tier} ({name}): FAILED")
+                    for error in result.get("errors", []):
+                        st.code(error)
+
+                # Show warnings if any
+                warnings = result.get("warnings", [])
+                if warnings:
+                    with st.expander(f"⚠️ Warnings ({len(warnings)})"):
+                        for w in warnings[:10]:
+                            st.warning(w)
+
+            # Summary
+            st.markdown("---")
+            if summary["all_passed"]:
+                st.success(f"🎉 All {summary['total_tests']} tests passed!")
+            else:
+                st.error(f"❌ {summary['failed']}/{summary['total_tests']} tests failed")
+
+
+# =============================================================================
+# Extended Panel with All Features
+# =============================================================================
+
+def render_tools_section(db, service: RoundtableService, session: RoundtableSession):
+    """Render tools section with baton, GitHub, stats, etc."""
+    st.divider()
+    st.subheader("🛠️ Tools")
+
+    tab1, tab2, tab3 = st.tabs(["📦 Baton", "🐙 GitHub", "📊 Stats"])
+
+    with tab1:
+        render_baton_section(service, session)
+
+    with tab2:
+        render_github_section(db, service, session)
+
+    with tab3:
+        render_session_stats(service, session)
