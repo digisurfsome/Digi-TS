@@ -75,11 +75,22 @@ def render_roundtable_panel(db: Session, project_id: Optional[int] = None):
     # Session Management Section
     st.subheader("📋 Session")
 
+    # Check if tables exist - handle gracefully if not
+    try:
+        sessions = service.list_sessions(project_id=project_id)
+    except Exception as e:
+        if "does not exist" in str(e) or "UndefinedTable" in str(e):
+            show_warning("Roundtable tables not found. Please go to **System Status** tab and click **Initialize Schema** to create the required database tables.")
+            st.info("After initializing, refresh this page to use Roundtable Coder.")
+            return
+        else:
+            show_error(f"Database error: {str(e)}")
+            return
+
     col1, col2, col3 = st.columns([3, 1, 1])
 
     with col1:
         # Get existing sessions
-        sessions = service.list_sessions(project_id=project_id)
         session_options = {s.name: s.id for s in sessions}
         session_options["+ New Session"] = None
 

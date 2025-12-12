@@ -77,6 +77,11 @@ AVAILABLE_MODELS = {
         "max_tokens": 128000
     },
     # Google Gemini
+    "Gemini 2.0 Flash Thinking": {
+        "id": "gemini-2.0-flash-thinking-exp-1219",
+        "provider": "google",
+        "max_tokens": 1000000
+    },
     "Gemini 2.0 Flash": {
         "id": "gemini-2.0-flash-exp",
         "provider": "google",
