@@ -35,6 +35,7 @@ from app.ui.layout import (
     render_truth_doc_export_ui,
 )
 from app.ui.node_tree_panel import render_design_tree_panel
+from app.ui.roundtable_panel import render_roundtable_panel
 from app.services import (
     get_or_create_default_user,
     list_all_users,
@@ -443,8 +444,8 @@ def main():
 
     # Right column: Tabs
     with main_col:
-        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
-            ["🏠 System Status", "⚙️ Settings", "📋 Project Context", "🎨 Design Tree", "📄 Truth Doc", "📊 Process Log"]
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(
+            ["🏠 System Status", "⚙️ Settings", "📋 Project Context", "🎨 Design Tree", "📄 Truth Doc", "📊 Process Log", "🔄 Roundtable"]
         )
 
         with tab1:
@@ -499,6 +500,12 @@ def main():
         with tab6:
             from app.services import render_process_log
             render_process_log()
+
+        with tab7:
+            # Roundtable Coder - works with or without a project
+            with get_db() as db:
+                project_id = st.session_state.get("current_project_id")
+                render_roundtable_panel(db, project_id=project_id)
 
     # Render footer
     render_footer()
