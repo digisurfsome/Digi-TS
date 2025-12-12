@@ -212,10 +212,28 @@ OPENAI_API_KEY=sk-...
         try:
             tables_exist, existing_tables = check_tables_exist()
 
+            # Check for all required tables including roundtable tables
+            required_tables = [
+                "user_profiles", "projects", "project_contexts", "nodes",
+                "node_versions", "draft_meta", "rant_summaries", "chat_sessions",
+                "chat_messages", "baton_snapshots", "settings",
+                "roundtable_sessions", "roundtable_rounds",
+                "roundtable_agents", "roundtable_responses"
+            ]
+            missing_tables = [t for t in required_tables if t not in existing_tables]
+            all_tables_exist = len(missing_tables) == 0
+
             if tables_exist and len(existing_tables) > 0:
-                show_success(
-                    f"Database schema is initialized ({len(existing_tables)} tables found)"
-                )
+                if all_tables_exist:
+                    show_success(
+                        f"Database schema is fully initialized ({len(existing_tables)} tables found)"
+                    )
+                else:
+                    show_warning(
+                        f"Database schema partially initialized - {len(missing_tables)} tables missing"
+                    )
+                    st.markdown("**Missing tables:** " + ", ".join(f"`{t}`" for t in missing_tables))
+                    st.info("Click 'Initialize Schema' to create the missing tables.")
 
                 with st.expander("View existing tables"):
                     for table in sorted(existing_tables):
@@ -229,13 +247,13 @@ OPENAI_API_KEY=sk-...
                     """
                 )
 
-            # Initialize schema button
+            # Initialize schema button - enabled if any tables are missing
             col1, col2, col3 = st.columns([1, 1, 2])
             with col1:
                 if st.button(
                     "Initialize Schema",
                     type="primary",
-                    disabled=tables_exist and len(existing_tables) > 0,
+                    disabled=all_tables_exist,
                 ):
                     with st.spinner("Creating database tables..."):
                         success, message = initialize_schema()

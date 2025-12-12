@@ -284,6 +284,20 @@ def render_settings_ui(db: Session, user_id: Optional[int] = None) -> None:
             help="Leave blank to use OPENAI_API_KEY from environment"
         )
 
+        anthropic_key = st.text_input(
+            "Anthropic API Key (for Claude models)",
+            value=current_settings.get("ANTHROPIC_API_KEY", ""),
+            type="password",
+            help="Required for Roundtable Coder with Claude models"
+        )
+
+        google_key = st.text_input(
+            "Google API Key (for Gemini models)",
+            value=current_settings.get("GOOGLE_API_KEY", ""),
+            type="password",
+            help="Required for Roundtable Coder with Gemini models"
+        )
+
         col1, col2 = st.columns(2)
         with col1:
             chat_model = st.text_input(
@@ -386,6 +400,8 @@ def render_settings_ui(db: Session, user_id: Optional[int] = None) -> None:
             try:
                 new_settings = {
                     "OPENAI_API_KEY": openai_key,
+                    "ANTHROPIC_API_KEY": anthropic_key,
+                    "GOOGLE_API_KEY": google_key,
                     "DEFAULT_CHAT_MODEL": chat_model,
                     "DEFAULT_SUMMARY_MODEL": summary_model,
                     "max_context_tokens": str(max_tokens),
