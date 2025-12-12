@@ -59,15 +59,17 @@ def render_roundtable_panel(db: Session, project_id: Optional[int] = None):
     # Get API keys from settings
     anthropic_key = get_setting(db, "ANTHROPIC_API_KEY")
     openai_key = get_setting(db, "OPENAI_API_KEY")
+    google_key = get_setting(db, "GOOGLE_API_KEY")
 
-    if not anthropic_key and not openai_key:
-        show_warning("No API keys configured. Add ANTHROPIC_API_KEY or OPENAI_API_KEY in Settings.")
+    if not anthropic_key and not openai_key and not google_key:
+        show_warning("No API keys configured. Add ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY in Settings.")
 
     # Initialize service
     service = RoundtableService(
         db=db,
         anthropic_key=anthropic_key,
-        openai_key=openai_key
+        openai_key=openai_key,
+        google_key=google_key
     )
 
     # Session Management Section

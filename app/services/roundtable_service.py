@@ -23,22 +23,33 @@ from app.core.models import (
 # Available models configuration
 AVAILABLE_MODELS = {
     # Anthropic
-    "Opus 4.5": {
+    "Claude Opus 4.5": {
         "id": "claude-opus-4-5-20250101",
         "provider": "anthropic",
         "max_tokens": 200000
     },
-    "Sonnet 4.5": {
+    "Claude Sonnet 4.5": {
         "id": "claude-sonnet-4-5-20250929",
         "provider": "anthropic",
         "max_tokens": 200000
     },
-    "Sonnet 3.5": {
+    "Claude Sonnet 3.5": {
         "id": "claude-3-5-sonnet-20241022",
         "provider": "anthropic",
         "max_tokens": 200000
     },
-    # OpenAI
+    # OpenAI - GPT-5.x (Latest)
+    "GPT-5.2": {
+        "id": "gpt-5.2-2025-12-11",
+        "provider": "openai",
+        "max_tokens": 400000
+    },
+    "GPT-5.1": {
+        "id": "gpt-5.1",
+        "provider": "openai",
+        "max_tokens": 400000
+    },
+    # OpenAI - GPT-4.x
     "GPT-4 Turbo": {
         "id": "gpt-4-turbo-preview",
         "provider": "openai",
@@ -53,6 +64,33 @@ AVAILABLE_MODELS = {
         "id": "gpt-4o-mini",
         "provider": "openai",
         "max_tokens": 128000
+    },
+    # OpenAI - o1 Reasoning
+    "o1": {
+        "id": "o1",
+        "provider": "openai",
+        "max_tokens": 200000
+    },
+    "o1-mini": {
+        "id": "o1-mini",
+        "provider": "openai",
+        "max_tokens": 128000
+    },
+    # Google Gemini
+    "Gemini 2.0 Flash": {
+        "id": "gemini-2.0-flash-exp",
+        "provider": "google",
+        "max_tokens": 1000000
+    },
+    "Gemini 1.5 Pro": {
+        "id": "gemini-1.5-pro",
+        "provider": "google",
+        "max_tokens": 2000000
+    },
+    "Gemini 1.5 Flash": {
+        "id": "gemini-1.5-flash",
+        "provider": "google",
+        "max_tokens": 1000000
     },
 }
 
@@ -82,7 +120,8 @@ class RoundtableService:
         self,
         db: Session,
         anthropic_key: Optional[str] = None,
-        openai_key: Optional[str] = None
+        openai_key: Optional[str] = None,
+        google_key: Optional[str] = None
     ):
         """
         Initialize the RoundtableService.
@@ -91,10 +130,13 @@ class RoundtableService:
             db: SQLAlchemy database session
             anthropic_key: Anthropic API key (optional)
             openai_key: OpenAI API key (optional)
+            google_key: Google AI API key (optional)
         """
         self.db = db
         self.anthropic_client = None
         self.openai_client = None
+        self.google_client = None
+        self.google_key = google_key
 
         if anthropic_key:
             try:
@@ -107,6 +149,14 @@ class RoundtableService:
             try:
                 from openai import OpenAI
                 self.openai_client = OpenAI(api_key=openai_key)
+            except ImportError:
+                pass
+
+        if google_key:
+            try:
+                import google.generativeai as genai
+                genai.configure(api_key=google_key)
+                self.google_client = genai
             except ImportError:
                 pass
 
@@ -590,8 +640,34 @@ class RoundtableService:
             content = response.choices[0].message.content
             tokens_in = response.usage.prompt_tokens
             tokens_out = response.usage.completion_tokens
-            # Estimate cost (GPT-4o pricing as baseline)
-            cost = (tokens_in * 0.005 / 1000) + (tokens_out * 0.015 / 1000)
+            # Estimate cost (GPT-4o pricing as baseline, GPT-5.x is more expensive)
+            if "gpt-5" in agent.model:
+                cost = (tokens_in * 1.75 / 1000000) + (tokens_out * 14.0 / 1000000)
+            else:
+                cost = (tokens_in * 0.005 / 1000) + (tokens_out * 0.015 / 1000)
+
+        elif agent.provider == "google":
+            if not self.google_client:
+                raise ValueError("Google AI API key not configured")
+
+            # Combine system prompt with user prompt for Gemini
+            combined_prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
+
+            model = self.google_client.GenerativeModel(agent.model)
+            response = model.generate_content(combined_prompt)
+
+            content = response.text
+            # Gemini token counting (approximate if not available)
+            try:
+                tokens_in = response.usage_metadata.prompt_token_count
+                tokens_out = response.usage_metadata.candidates_token_count
+            except AttributeError:
+                # Estimate tokens if metadata not available
+                tokens_in = len(combined_prompt) // 4
+                tokens_out = len(content) // 4
+
+            # Gemini pricing (Gemini 1.5 Pro pricing as baseline)
+            cost = (tokens_in * 0.00125 / 1000) + (tokens_out * 0.005 / 1000)
 
         else:
             raise ValueError(f"Unknown provider: {agent.provider}")
