@@ -104,19 +104,25 @@ def list_ideas(
     Returns:
         List of matching ideas
     """
-    query = db.query(Idea).filter(Idea.project_id == project_id)
+    try:
+        query = db.query(Idea).filter(Idea.project_id == project_id)
 
-    if user_id is not None:
-        query = query.filter(Idea.user_id == user_id)
-    if status is not None:
-        query = query.filter(Idea.status == status)
-    if category is not None:
-        query = query.filter(Idea.category == category)
-    if min_rating is not None:
-        query = query.filter(Idea.rating >= min_rating)
+        if user_id is not None:
+            query = query.filter(Idea.user_id == user_id)
+        if status is not None:
+            query = query.filter(Idea.status == status)
+        if category is not None:
+            query = query.filter(Idea.category == category)
+        if min_rating is not None:
+            query = query.filter(Idea.rating >= min_rating)
 
-    # Order by rating (desc), then times_shown (asc for less-shown ideas)
-    return query.order_by(desc(Idea.rating), Idea.times_shown).all()
+        # Order by rating (desc), then times_shown (asc for less-shown ideas)
+        return query.order_by(desc(Idea.rating), Idea.times_shown).all()
+    except Exception as e:
+        # If table doesn't exist yet, return empty list
+        if "ideas" in str(e).lower() or "undefined" in str(e).lower():
+            return []
+        raise
 
 
 def update_idea(
@@ -261,28 +267,34 @@ def get_warmup_ideas(
     Returns:
         List of ideas for warmup
     """
-    # Get active ideas only
-    ideas = (
-        db.query(Idea)
-        .filter(
-            and_(
-                Idea.project_id == project_id,
-                Idea.user_id == user_id,
-                Idea.status == IdeaStatus.ACTIVE,
+    try:
+        # Get active ideas only
+        ideas = (
+            db.query(Idea)
+            .filter(
+                and_(
+                    Idea.project_id == project_id,
+                    Idea.user_id == user_id,
+                    Idea.status == IdeaStatus.ACTIVE,
+                )
             )
+            # Score: rating * 2 - log(times_shown + 1)
+            # High rating + low times_shown = higher priority
+            .order_by(
+                desc(Idea.rating),
+                Idea.times_shown,
+                desc(Idea.created_at),
+            )
+            .limit(max_ideas)
+            .all()
         )
-        # Score: rating * 2 - log(times_shown + 1)
-        # High rating + low times_shown = higher priority
-        .order_by(
-            desc(Idea.rating),
-            Idea.times_shown,
-            desc(Idea.created_at),
-        )
-        .limit(max_ideas)
-        .all()
-    )
 
-    return ideas
+        return ideas
+    except Exception as e:
+        # If table doesn't exist yet, return empty list
+        if "ideas" in str(e).lower() or "undefined" in str(e).lower():
+            return []
+        raise
 
 
 def mark_ideas_shown(db: Session, idea_ids: List[int]) -> int:
@@ -322,63 +334,77 @@ def get_idea_stats(db: Session, project_id: int, user_id: int) -> Dict[str, Any]
     Returns:
         Dictionary with stats
     """
-    base_query = db.query(Idea).filter(
-        and_(
-            Idea.project_id == project_id,
-            Idea.user_id == user_id,
-        )
-    )
-
-    total = base_query.count()
-    active = base_query.filter(Idea.status == IdeaStatus.ACTIVE).count()
-    retired = base_query.filter(Idea.status == IdeaStatus.RETIRED).count()
-    archived = base_query.filter(Idea.status == IdeaStatus.ARCHIVED).count()
-
-    # Category breakdown (active only)
-    category_counts = {}
-    for cat in IdeaCategory:
-        count = base_query.filter(
-            and_(
-                Idea.status == IdeaStatus.ACTIVE,
-                Idea.category == cat,
-            )
-        ).count()
-        category_counts[cat.value] = count
-
-    # Average rating of active ideas
-    avg_rating = (
-        db.query(func.avg(Idea.rating))
-        .filter(
-            and_(
-                Idea.project_id == project_id,
-                Idea.user_id == user_id,
-                Idea.status == IdeaStatus.ACTIVE,
-            )
-        )
-        .scalar()
-    ) or 0
-
-    # Total times shown
-    total_shown = (
-        db.query(func.sum(Idea.times_shown))
-        .filter(
+    try:
+        base_query = db.query(Idea).filter(
             and_(
                 Idea.project_id == project_id,
                 Idea.user_id == user_id,
             )
         )
-        .scalar()
-    ) or 0
 
-    return {
-        "total": total,
-        "active": active,
-        "retired": retired,
-        "archived": archived,
-        "by_category": category_counts,
-        "avg_rating": round(float(avg_rating), 1),
-        "total_times_shown": int(total_shown),
-    }
+        total = base_query.count()
+        active = base_query.filter(Idea.status == IdeaStatus.ACTIVE).count()
+        retired = base_query.filter(Idea.status == IdeaStatus.RETIRED).count()
+        archived = base_query.filter(Idea.status == IdeaStatus.ARCHIVED).count()
+
+        # Category breakdown (active only)
+        category_counts = {}
+        for cat in IdeaCategory:
+            count = base_query.filter(
+                and_(
+                    Idea.status == IdeaStatus.ACTIVE,
+                    Idea.category == cat,
+                )
+            ).count()
+            category_counts[cat.value] = count
+
+        # Average rating of active ideas
+        avg_rating = (
+            db.query(func.avg(Idea.rating))
+            .filter(
+                and_(
+                    Idea.project_id == project_id,
+                    Idea.user_id == user_id,
+                    Idea.status == IdeaStatus.ACTIVE,
+                )
+            )
+            .scalar()
+        ) or 0
+
+        # Total times shown
+        total_shown = (
+            db.query(func.sum(Idea.times_shown))
+            .filter(
+                and_(
+                    Idea.project_id == project_id,
+                    Idea.user_id == user_id,
+                )
+            )
+            .scalar()
+        ) or 0
+
+        return {
+            "total": total,
+            "active": active,
+            "retired": retired,
+            "archived": archived,
+            "by_category": category_counts,
+            "avg_rating": round(float(avg_rating), 1),
+            "total_times_shown": int(total_shown),
+        }
+    except Exception as e:
+        # If table doesn't exist yet, return empty stats
+        if "ideas" in str(e).lower() or "undefined" in str(e).lower():
+            return {
+                "total": 0,
+                "active": 0,
+                "retired": 0,
+                "archived": 0,
+                "by_category": {},
+                "avg_rating": 0,
+                "total_times_shown": 0,
+            }
+        raise
 
 
 # =============================================================================

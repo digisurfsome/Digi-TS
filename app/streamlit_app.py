@@ -223,14 +223,16 @@ OPENAI_API_KEY=sk-...
         try:
             tables_exist, existing_tables = check_tables_exist()
 
-            # Check for all required tables including roundtable tables
+            # Check for all required tables including roundtable tables and Phase 5 tables
             required_tables = [
                 "user_profiles", "projects", "project_contexts", "nodes",
                 "node_versions", "draft_meta", "rant_summaries", "chat_sessions",
                 "chat_messages", "baton_snapshots", "settings",
                 "roundtable_sessions", "roundtable_rounds",
                 "roundtable_agents", "roundtable_responses",
-                "raw_rants"
+                "raw_rants",
+                # Phase 5: Learning & Memory
+                "ideas", "session_activities"
             ]
             missing_tables = [t for t in required_tables if t not in existing_tables]
             all_tables_exist = len(missing_tables) == 0

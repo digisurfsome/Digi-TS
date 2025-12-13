@@ -122,31 +122,47 @@ def get_or_create_activity(
     Returns:
         SessionActivity record
     """
-    activity = (
-        db.query(SessionActivity)
-        .filter(
-            and_(
-                SessionActivity.user_id == user_id,
-                SessionActivity.project_id == project_id,
+    try:
+        activity = (
+            db.query(SessionActivity)
+            .filter(
+                and_(
+                    SessionActivity.user_id == user_id,
+                    SessionActivity.project_id == project_id,
+                )
             )
+            .first()
         )
-        .first()
-    )
 
-    if not activity:
-        now = datetime.utcnow()
-        activity = SessionActivity(
-            user_id=user_id,
-            project_id=project_id,
-            last_active=now,
-            session_start=now,
-            warmup_completed=False,
-        )
-        db.add(activity)
-        db.commit()
-        db.refresh(activity)
+        if not activity:
+            now = datetime.utcnow()
+            activity = SessionActivity(
+                user_id=user_id,
+                project_id=project_id,
+                last_active=now,
+                session_start=now,
+                warmup_completed=False,
+            )
+            db.add(activity)
+            db.commit()
+            db.refresh(activity)
 
-    return activity
+        return activity
+    except Exception as e:
+        # If table doesn't exist yet, create a mock activity
+        # This allows the app to work before schema is updated
+        if "session_activities" in str(e).lower() or "undefined" in str(e).lower():
+            # Return a mock activity object
+            mock = SessionActivity(
+                user_id=user_id,
+                project_id=project_id,
+                last_active=datetime.utcnow(),
+                session_start=datetime.utcnow(),
+                warmup_completed=True,  # Skip warmup if table missing
+            )
+            mock.id = 0  # Indicate it's a mock
+            return mock
+        raise
 
 
 def update_activity(
