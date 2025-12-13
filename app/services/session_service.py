@@ -149,6 +149,8 @@ def get_or_create_activity(
 
         return activity
     except Exception as e:
+        # Rollback the failed transaction to prevent subsequent queries from failing
+        db.rollback()
         # If table doesn't exist yet, create a mock activity
         # This allows the app to work before schema is updated
         if "session_activities" in str(e).lower() or "undefined" in str(e).lower():
