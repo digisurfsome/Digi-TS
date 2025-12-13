@@ -470,6 +470,40 @@ class Settings(Base, TimestampMixin):
 # =============================================================================
 
 
+class RawRant(Base, TimestampMixin):
+    """
+    Raw rant preservation.
+
+    Stores the original, unmodified rant/brainstorm text from user sessions.
+    This is the "sacred" original content that should never be modified.
+    """
+    __tablename__ = "raw_rants"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    session_id: Mapped[Optional[int]] = mapped_column(ForeignKey("chat_sessions.id"), index=True)
+
+    # The sacred, unmodified original text
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Metadata
+    source_type: Mapped[str] = mapped_column(String(50), default="chat")  # chat, manual, voice
+    word_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Optional Agent OS document reference (JSON)
+    agent_os_doc: Mapped[Optional[dict]] = mapped_column(JSON)
+
+    extra_metadata: Mapped[Optional[dict]] = mapped_column("metadata", JSON)
+
+    def __repr__(self):
+        return f"<RawRant(id={self.id}, project_id={self.project_id}, words={self.word_count})>"
+
+
+# =============================================================================
+# ROUNDTABLE CODER MODELS
+# =============================================================================
+
+
 class RoundtableSessionStatus(str, enum.Enum):
     """Status of a roundtable session."""
     ACTIVE = "active"

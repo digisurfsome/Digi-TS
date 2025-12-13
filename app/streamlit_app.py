@@ -36,6 +36,7 @@ from app.ui.layout import (
 )
 from app.ui.node_tree_panel import render_design_tree_panel
 from app.ui.roundtable_panel import render_roundtable_panel
+from app.ui.agent_os_panel import render_agent_os_panel
 from app.services import (
     get_or_create_default_user,
     list_all_users,
@@ -218,7 +219,8 @@ OPENAI_API_KEY=sk-...
                 "node_versions", "draft_meta", "rant_summaries", "chat_sessions",
                 "chat_messages", "baton_snapshots", "settings",
                 "roundtable_sessions", "roundtable_rounds",
-                "roundtable_agents", "roundtable_responses"
+                "roundtable_agents", "roundtable_responses",
+                "raw_rants"
             ]
             missing_tables = [t for t in required_tables if t not in existing_tables]
             all_tables_exist = len(missing_tables) == 0
@@ -462,8 +464,8 @@ def main():
 
     # Right column: Tabs
     with main_col:
-        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(
-            ["🏠 System Status", "⚙️ Settings", "📋 Project Context", "🎨 Design Tree", "📄 Truth Doc", "📊 Process Log", "🔄 Roundtable"]
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(
+            ["🏠 System Status", "⚙️ Settings", "📋 Project Context", "🎨 Design Tree", "🤖 Agent OS", "📄 Truth Doc", "📊 Process Log", "🔄 Roundtable"]
         )
 
         with tab1:
@@ -503,6 +505,22 @@ def main():
                 st.info("📁 **No Project Selected**\n\nPlease select or create a project in the left sidebar to manage design tree nodes.")
 
         with tab5:
+            # Agent OS - Transform rants into structured specs
+            if st.session_state.get("current_project_id"):
+                with get_db() as db:
+                    from app.services import get_project_by_id
+
+                    project = get_project_by_id(db, st.session_state.current_project_id)
+                    if project:
+                        # Get current chat session ID if available
+                        session_id = st.session_state.get("current_chat_session_id")
+                        render_agent_os_panel(db, project, session_id)
+                    else:
+                        show_error("⚠️ Selected project not found. Please select a project from the sidebar.")
+            else:
+                st.info("📁 **No Project Selected**\n\nPlease select or create a project in the left sidebar to use Agent OS.")
+
+        with tab6:
             if st.session_state.get("current_project_id"):
                 with get_db() as db:
                     from app.services import get_project_by_id
@@ -515,11 +533,11 @@ def main():
             else:
                 st.info("📁 **No Project Selected**\n\nPlease select or create a project in the left sidebar to export Truth Doc.")
 
-        with tab6:
+        with tab7:
             from app.services import render_process_log
             render_process_log()
 
-        with tab7:
+        with tab8:
             # Roundtable Coder - works with or without a project
             with get_db() as db:
                 project_id = st.session_state.get("current_project_id")

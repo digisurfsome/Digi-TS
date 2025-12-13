@@ -87,6 +87,24 @@ from app.services.node_detector import (
     get_node_definition_doc,
 )
 
+from app.services.agent_os_service import (
+    AgentOSDocument,
+    AgentOSSection,
+    AgentOSSubsection,
+    ClassifiedItem,
+    classify_text,
+    generate_agent_os_from_rant,
+    create_empty_template,
+    get_section_icon,
+    get_subsection_icon,
+    get_classification_summary,
+    build_document_from_items,
+    save_raw_rant,
+    get_raw_rants,
+    get_raw_rant_by_id,
+    get_full_conversation_text,
+)
+
 __all__ = [
     # User service
     "get_or_create_default_user",
@@ -155,4 +173,20 @@ __all__ = [
     "get_node_type_icon",
     "format_detected_node_summary",
     "get_node_definition_doc",
+    # Agent OS service
+    "AgentOSDocument",
+    "AgentOSSection",
+    "AgentOSSubsection",
+    "ClassifiedItem",
+    "classify_text",
+    "generate_agent_os_from_rant",
+    "create_empty_template",
+    "get_section_icon",
+    "get_subsection_icon",
+    "get_classification_summary",
+    "build_document_from_items",
+    "save_raw_rant",
+    "get_raw_rants",
+    "get_raw_rant_by_id",
+    "get_full_conversation_text",
 ]
