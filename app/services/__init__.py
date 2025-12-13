@@ -115,6 +115,37 @@ from app.services.agent_os_service import (
     generate_fill_prompts,
     process_fill_response,
     get_flash_label_sections,
+    # Voice rant functions (Phase 2B)
+    VOICE_SECTION_MAP,
+    save_voice_rant,
+    get_voice_rants,
+    add_tagged_content_to_document,
+    generate_agent_os_from_tagged_rant,
+    get_organized_view,
+)
+
+from app.services.voice_service import (
+    # Data structures
+    VoiceInputMode,
+    RecordingState,
+    TagEvent,
+    TaggedSegment,
+    VoiceRantData,
+    RecordingSession,
+    # Transcription
+    transcribe_audio,
+    transcribe_audio_file,
+    # Processing
+    process_click_to_rant,
+    process_real_time_rant,
+    split_transcript_by_tags,
+    # Helpers
+    get_taggable_sections,
+    get_section_key,
+    format_duration,
+    create_recording_session,
+    start_recording,
+    stop_recording,
 )
 
 __all__ = [
@@ -213,4 +244,29 @@ __all__ = [
     "generate_fill_prompts",
     "process_fill_response",
     "get_flash_label_sections",
+    # Voice rant functions (Phase 2B)
+    "VOICE_SECTION_MAP",
+    "save_voice_rant",
+    "get_voice_rants",
+    "add_tagged_content_to_document",
+    "generate_agent_os_from_tagged_rant",
+    "get_organized_view",
+    # Voice service (Phase 2B)
+    "VoiceInputMode",
+    "RecordingState",
+    "TagEvent",
+    "TaggedSegment",
+    "VoiceRantData",
+    "RecordingSession",
+    "transcribe_audio",
+    "transcribe_audio_file",
+    "process_click_to_rant",
+    "process_real_time_rant",
+    "split_transcript_by_tags",
+    "get_taggable_sections",
+    "get_section_key",
+    "format_duration",
+    "create_recording_session",
+    "start_recording",
+    "stop_recording",
 ]

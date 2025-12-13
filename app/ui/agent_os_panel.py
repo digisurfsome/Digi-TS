@@ -3,12 +3,14 @@ Agent OS Panel UI Components.
 
 Provides UI for viewing, generating, and exporting Agent OS documents.
 Includes live tree view of Agent OS structure and consolidation features.
+Phase 2B: Adds Click-to-Rant and Real-Time Tagging voice input features.
 """
 
 import streamlit as st
 from sqlalchemy.orm import Session
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+import time
 
 from app.core.models import Project, ChatMessage
 from app.services import (
@@ -38,6 +40,26 @@ from app.services.agent_os_service import (
     process_fill_response,
     get_flash_label_sections,
     SECTION_MINIMUMS,
+    VOICE_SECTION_MAP,
+    add_tagged_content_to_document,
+    save_voice_rant,
+    get_voice_rants,
+    generate_agent_os_from_tagged_rant,
+    get_organized_view,
+)
+from app.services.voice_service import (
+    VoiceInputMode,
+    RecordingState,
+    TagEvent,
+    TaggedSegment,
+    VoiceRantData,
+    transcribe_audio,
+    process_click_to_rant,
+    process_real_time_rant,
+    split_transcript_by_tags,
+    get_taggable_sections,
+    get_section_key,
+    format_duration,
 )
 from app.ui.layout import show_success, show_error, show_warning, show_info
 
@@ -344,6 +366,679 @@ def render_flash_labels(doc: AgentOSDocument, feature_name: Optional[str] = None
     '''
 
     st.markdown(css + labels_html, unsafe_allow_html=True)
+
+
+# ============================================================================
+# CLICK-TO-RANT: Interactive Flash Labels (Mechanism 2)
+# ============================================================================
+
+
+def render_clickable_flash_labels(
+    doc: AgentOSDocument,
+    db: Session,
+    project: Project,
+    feature_name: Optional[str] = None
+) -> Optional[str]:
+    """
+    Render clickable Flash Labels for Click-to-Rant mode.
+
+    Labels are interactive - clicking one activates voice input for that section.
+
+    Args:
+        doc: AgentOSDocument to check
+        db: Database session
+        project: Current project
+        feature_name: Optional specific feature to check
+
+    Returns:
+        Selected section name if a label was clicked, None otherwise
+    """
+    # Get section statuses
+    statuses = doc.get_section_status(feature_name)
+
+    # Check if we're in recording mode
+    is_recording = st.session_state.get("voice_recording_active", False)
+    active_section = st.session_state.get("voice_target_section", None)
+
+    st.markdown("#### Click a Section to Speak")
+    st.caption("Tap a label below, then speak to fill that section with voice input.")
+
+    # Define colors for each state
+    state_styles = {
+        "empty": {"bg": "#ff6b6b", "color": "white", "icon": "[ ]"},
+        "partial": {"bg": "#ffa502", "color": "white", "icon": "[~]"},
+        "complete": {"bg": "#26de81", "color": "white", "icon": "[x]"},
+        "active": {"bg": "#0ea5e9", "color": "white", "icon": "[*]"}  # Recording state
+    }
+
+    # Create columns for section buttons
+    sections = list(statuses.keys())
+    cols = st.columns(min(len(sections), 4))
+
+    selected_section = None
+
+    for idx, section_name in enumerate(sections):
+        col_idx = idx % len(cols)
+        status = statuses[section_name]
+
+        # Override status if this section is being recorded
+        if is_recording and active_section == section_name:
+            status = "active"
+
+        style = state_styles.get(status, state_styles["empty"])
+
+        with cols[col_idx]:
+            # Use button for each section
+            button_label = f"{style['icon']} {section_name}"
+
+            if is_recording and active_section == section_name:
+                button_label = f"[REC] {section_name}"
+
+            if st.button(
+                button_label,
+                key=f"flash_label_{section_name}_{project.id}",
+                use_container_width=True,
+                type="primary" if status == "active" else "secondary"
+            ):
+                selected_section = section_name
+
+    # Show recording indicator if active
+    if is_recording and active_section:
+        st.markdown(f"""
+        <div style="
+            background: #0ea5e9;
+            color: white;
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin: 12px 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        ">
+            <span style="animation: pulse 1s infinite; font-size: 20px;">REC</span>
+            <span>Recording to: <strong>{active_section}</strong></span>
+        </div>
+        """, unsafe_allow_html=True)
+
+    return selected_section
+
+
+def render_click_to_rant_panel(
+    doc: AgentOSDocument,
+    db: Session,
+    project: Project
+) -> Optional[AgentOSDocument]:
+    """
+    Render the Click-to-Rant voice input panel.
+
+    Mechanism 2: Click a label, then speak to fill ONLY that section.
+
+    Args:
+        doc: AgentOSDocument to update
+        db: Database session
+        project: Current project
+
+    Returns:
+        Updated AgentOSDocument if changes were made, None otherwise
+    """
+    st.subheader("Click-to-Rant")
+    st.markdown("""
+    **How it works:**
+    1. Click a section label below
+    2. Record your voice (or type if voice unavailable)
+    3. Content goes directly to that section
+    """)
+
+    # Get settings
+    settings = get_all_settings(db)
+    api_key = settings.get("OPENAI_API_KEY", "")
+
+    if not api_key:
+        st.warning("OpenAI API key required for voice transcription. Set it in Settings.")
+
+    # Render clickable labels
+    selected_section = render_clickable_flash_labels(doc, db, project)
+
+    # Handle section selection
+    if selected_section:
+        st.session_state.voice_target_section = selected_section
+        st.session_state.voice_input_mode = "click_to_rant"
+        st.rerun()
+
+    # If a section is selected, show input options
+    target_section = st.session_state.get("voice_target_section")
+
+    if target_section:
+        st.markdown(f"### Recording to: **{target_section}**")
+
+        # Voice input using Streamlit's audio input
+        st.markdown("#### Option 1: Voice Input")
+        audio_data = st.audio_input(
+            "Click to record",
+            key=f"audio_input_{target_section}_{project.id}"
+        )
+
+        if audio_data:
+            with st.spinner(f"Transcribing and adding to {target_section}..."):
+                try:
+                    # Read audio bytes
+                    audio_bytes = audio_data.read()
+
+                    # Transcribe
+                    text, target = process_click_to_rant(
+                        audio_data=audio_bytes,
+                        target_section=target_section,
+                        openai_api_key=api_key
+                    )
+
+                    if text:
+                        # Get section key
+                        section_key = get_section_key(target_section)
+
+                        # Add to document
+                        updated_doc = add_tagged_content_to_document(
+                            doc, section_key, text
+                        )
+
+                        # Save voice rant to database
+                        try:
+                            save_voice_rant(
+                                db=db,
+                                project_id=project.id,
+                                raw_transcript=text,
+                                total_duration=0,  # Audio input doesn't provide duration
+                                mode="click_to_rant",
+                                target_section=target_section,
+                                agent_os_doc=updated_doc.to_dict()
+                            )
+                        except Exception as save_err:
+                            show_warning(f"Could not save voice rant: {save_err}")
+
+                        # Update session state
+                        st.session_state.agent_os_doc = updated_doc
+                        st.session_state.agent_os_doc_dict = updated_doc.to_dict()
+
+                        show_success(f"Added {len(text.split())} words to {target_section}!")
+
+                        # Clear target section
+                        del st.session_state["voice_target_section"]
+                        st.rerun()
+
+                except Exception as e:
+                    show_error(f"Transcription failed: {str(e)}")
+
+        # Fallback: Text input
+        st.markdown("#### Option 2: Type Instead")
+        manual_text = st.text_area(
+            f"Type content for {target_section}",
+            placeholder="Type your content here if voice isn't available...",
+            height=100,
+            key=f"manual_input_{target_section}_{project.id}"
+        )
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Add Content", type="primary", use_container_width=True):
+                if manual_text and manual_text.strip():
+                    section_key = get_section_key(target_section)
+                    updated_doc = add_tagged_content_to_document(
+                        doc, section_key, manual_text.strip()
+                    )
+                    st.session_state.agent_os_doc = updated_doc
+                    st.session_state.agent_os_doc_dict = updated_doc.to_dict()
+                    show_success(f"Added content to {target_section}!")
+                    del st.session_state["voice_target_section"]
+                    st.rerun()
+                else:
+                    show_warning("Please enter some content")
+
+        with col2:
+            if st.button("Cancel", use_container_width=True):
+                del st.session_state["voice_target_section"]
+                st.rerun()
+
+    return None
+
+
+# ============================================================================
+# REAL-TIME TAGGING: Continuous Recording with Tags (Mechanism 3)
+# ============================================================================
+
+
+def render_real_time_tagging_panel(
+    doc: AgentOSDocument,
+    db: Session,
+    project: Project
+) -> Optional[AgentOSDocument]:
+    """
+    Render the Real-Time Tagging panel.
+
+    Mechanism 3: One continuous rant with tag buttons to mark sections as you go.
+
+    Args:
+        doc: AgentOSDocument to update
+        db: Database session
+        project: Current project
+
+    Returns:
+        Updated AgentOSDocument if changes were made, None otherwise
+    """
+    st.subheader("Real-Time Tagging")
+    st.markdown("""
+    **How it works:**
+    1. Click **Start Rant** to begin recording
+    2. Tap section buttons as you speak to mark what you're talking about
+    3. Click **End Rant** when done
+    4. See both raw rant and organized version
+    """)
+
+    # Get settings
+    settings = get_all_settings(db)
+    api_key = settings.get("OPENAI_API_KEY", "")
+
+    if not api_key:
+        st.warning("OpenAI API key required for voice transcription. Set it in Settings.")
+
+    # Initialize session state for tagging
+    if "realtime_tag_events" not in st.session_state:
+        st.session_state.realtime_tag_events = []
+    if "realtime_recording_start" not in st.session_state:
+        st.session_state.realtime_recording_start = None
+    if "realtime_current_tag" not in st.session_state:
+        st.session_state.realtime_current_tag = None
+
+    is_recording = st.session_state.get("realtime_recording_active", False)
+
+    # Recording controls
+    if not is_recording:
+        # Start recording UI
+        st.markdown("---")
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            if st.button(
+                "Start Rant",
+                type="primary",
+                use_container_width=True,
+                key="start_rant_btn"
+            ):
+                st.session_state.realtime_recording_active = True
+                st.session_state.realtime_recording_start = time.time()
+                st.session_state.realtime_tag_events = []
+                st.session_state.realtime_current_tag = None
+                st.rerun()
+    else:
+        # Recording in progress UI
+        elapsed = time.time() - st.session_state.realtime_recording_start
+        elapsed_str = format_duration(elapsed)
+
+        # Recording indicator
+        st.markdown(f"""
+        <div style="
+            background: linear-gradient(135deg, #dc2626, #ef4444);
+            color: white;
+            padding: 16px 20px;
+            border-radius: 12px;
+            margin: 12px 0;
+            text-align: center;
+        ">
+            <div style="font-size: 24px; font-weight: bold; animation: pulse 1s infinite;">
+                REC {elapsed_str}
+            </div>
+            <div style="font-size: 14px; margin-top: 8px;">
+                Tap tags below as you speak to mark sections
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Tag buttons
+        st.markdown("#### Tap to Tag Current Section")
+        sections = get_taggable_sections()
+        cols = st.columns(4)
+
+        current_tag = st.session_state.get("realtime_current_tag")
+
+        for idx, section in enumerate(sections):
+            col_idx = idx % 4
+            with cols[col_idx]:
+                is_active = current_tag == section
+                btn_type = "primary" if is_active else "secondary"
+
+                if st.button(
+                    f"{'> ' if is_active else ''}{section}",
+                    key=f"tag_btn_{section}_{project.id}",
+                    use_container_width=True,
+                    type=btn_type
+                ):
+                    # Record tag event
+                    tag_time = time.time() - st.session_state.realtime_recording_start
+                    st.session_state.realtime_tag_events.append({
+                        "section": section,
+                        "timestamp": tag_time
+                    })
+                    st.session_state.realtime_current_tag = section
+                    st.rerun()
+
+        # Current tag indicator
+        if current_tag:
+            tag_count = len(st.session_state.realtime_tag_events)
+            st.markdown(f"""
+            <div style="
+                background: #0ea5e9;
+                color: white;
+                padding: 10px 16px;
+                border-radius: 8px;
+                margin: 12px 0;
+            ">
+                <strong>Currently tagging:</strong> {current_tag} |
+                <strong>Tags recorded:</strong> {tag_count}
+            </div>
+            """, unsafe_allow_html=True)
+
+        # Tag history
+        if st.session_state.realtime_tag_events:
+            with st.expander("Tag History", expanded=False):
+                for i, tag in enumerate(st.session_state.realtime_tag_events):
+                    st.caption(f"{format_duration(tag['timestamp'])} - {tag['section']}")
+
+        st.markdown("---")
+
+        # Audio input for the recording
+        st.markdown("#### Record Your Rant")
+        audio_data = st.audio_input(
+            "Record your continuous rant here",
+            key=f"realtime_audio_{project.id}"
+        )
+
+        # End recording controls
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("End Rant", type="primary", use_container_width=True):
+                if audio_data:
+                    with st.spinner("Processing your rant..."):
+                        try:
+                            # Read audio
+                            audio_bytes = audio_data.read()
+
+                            # Create tag events from session state
+                            tag_events = [
+                                TagEvent(
+                                    section=t["section"],
+                                    timestamp=t["timestamp"]
+                                )
+                                for t in st.session_state.realtime_tag_events
+                            ]
+
+                            # Process with real-time tagging
+                            rant_data = process_real_time_rant(
+                                audio_data=audio_bytes,
+                                tag_events=tag_events,
+                                openai_api_key=api_key
+                            )
+
+                            # Store rant data for viewing
+                            st.session_state.voice_rant_data = rant_data.to_dict()
+
+                            # Save to database
+                            try:
+                                save_voice_rant(
+                                    db=db,
+                                    project_id=project.id,
+                                    raw_transcript=rant_data.raw_transcript,
+                                    total_duration=rant_data.total_duration,
+                                    mode="real_time_tag",
+                                    tag_events=[t.to_dict() for t in rant_data.tags],
+                                    tagged_segments=[s.to_dict() for s in rant_data.segments],
+                                    whisper_segments=rant_data.whisper_segments
+                                )
+                            except Exception as save_err:
+                                show_warning(f"Could not save: {save_err}")
+
+                            # Clean up recording state
+                            st.session_state.realtime_recording_active = False
+                            st.session_state.realtime_recording_start = None
+
+                            show_success(f"Rant processed! {len(rant_data.raw_transcript.split())} words, {len(rant_data.segments)} segments")
+                            st.rerun()
+
+                        except Exception as e:
+                            show_error(f"Processing failed: {str(e)}")
+                else:
+                    show_warning("Please record audio before ending the rant")
+
+        with col2:
+            if st.button("Cancel", use_container_width=True):
+                st.session_state.realtime_recording_active = False
+                st.session_state.realtime_recording_start = None
+                st.session_state.realtime_tag_events = []
+                st.session_state.realtime_current_tag = None
+                st.rerun()
+
+    # Show results if we have processed rant data
+    if "voice_rant_data" in st.session_state and not is_recording:
+        render_rant_results_view(doc, db, project)
+
+    return None
+
+
+# ============================================================================
+# RAW VS ORGANIZED VIEW (Rant Results)
+# ============================================================================
+
+
+def render_rant_results_view(
+    doc: AgentOSDocument,
+    db: Session,
+    project: Project
+) -> None:
+    """
+    Render the Raw vs Organized toggle view for processed rants.
+
+    Shows both the raw unmodified transcript and the organized version
+    split by tagged sections.
+
+    Args:
+        doc: AgentOSDocument
+        db: Database session
+        project: Current project
+    """
+    rant_data = st.session_state.get("voice_rant_data")
+    if not rant_data:
+        return
+
+    st.markdown("---")
+    st.subheader("Rant Results")
+
+    # Toggle view
+    view_mode = st.radio(
+        "View Mode",
+        ["Raw Rant", "Organized"],
+        horizontal=True,
+        key=f"rant_view_mode_{project.id}"
+    )
+
+    if view_mode == "Raw Rant":
+        # Raw rant view
+        st.markdown("#### Raw Transcript (Unmodified)")
+        st.caption("This is your original rant, preserved exactly as transcribed.")
+
+        raw_text = rant_data.get("raw_transcript", "")
+        duration = rant_data.get("total_duration", 0)
+        word_count = len(raw_text.split()) if raw_text else 0
+
+        # Stats
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Words", word_count)
+        with col2:
+            st.metric("Duration", format_duration(duration))
+        with col3:
+            st.metric("Segments", len(rant_data.get("segments", [])))
+
+        # Raw text with tag markers overlay (optional)
+        show_markers = st.checkbox("Show tag markers", value=True)
+
+        if show_markers and rant_data.get("tags"):
+            # Display with tag markers inline
+            st.markdown("*Tag markers shown as `[Section @ MM:SS]`*")
+
+            display_text = raw_text
+            tags = sorted(rant_data.get("tags", []), key=lambda t: t.get("timestamp", 0), reverse=True)
+
+            # This is approximate since we don't have exact character positions
+            st.text_area(
+                "Raw transcript",
+                value=raw_text,
+                height=300,
+                disabled=True,
+                label_visibility="collapsed"
+            )
+
+            # Show tag timeline below
+            st.markdown("**Tag Timeline:**")
+            for tag in sorted(rant_data.get("tags", []), key=lambda t: t.get("timestamp", 0)):
+                ts = format_duration(tag.get("timestamp", 0))
+                section = tag.get("section", "Unknown")
+                st.caption(f"`{ts}` - {section}")
+        else:
+            st.text_area(
+                "Raw transcript",
+                value=raw_text,
+                height=300,
+                disabled=True,
+                label_visibility="collapsed"
+            )
+
+    else:
+        # Organized view
+        st.markdown("#### Organized by Section")
+        st.caption("Your rant split into Agent OS sections based on your tags.")
+
+        segments = rant_data.get("segments", [])
+
+        if segments:
+            # Group by section
+            organized = get_organized_view(segments)
+
+            for section, text in organized.items():
+                with st.expander(f"**{section}**", expanded=True):
+                    st.markdown(text)
+
+                    # Show time range
+                    section_segs = [s for s in segments if s.get("section") == section]
+                    if section_segs:
+                        start = min(s.get("start_time", 0) for s in section_segs)
+                        end = max(s.get("end_time", 0) for s in section_segs)
+                        st.caption(f"Time: {format_duration(start)} - {format_duration(end)}")
+        else:
+            st.info("No tagged segments found. The entire rant will be treated as untagged content.")
+
+    # Actions
+    st.markdown("---")
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        if st.button("Add to Agent OS", type="primary", use_container_width=True):
+            settings = get_all_settings(db)
+            api_key = settings.get("OPENAI_API_KEY", "")
+
+            with st.spinner("Generating Agent OS document from rant..."):
+                try:
+                    segments = rant_data.get("segments", [])
+                    raw_transcript = rant_data.get("raw_transcript", "")
+
+                    if segments:
+                        # Generate from tagged segments
+                        updated_doc = generate_agent_os_from_tagged_rant(
+                            tagged_segments=segments,
+                            raw_transcript=raw_transcript,
+                            openai_api_key=api_key,
+                            project_name=project.name
+                        )
+                    else:
+                        # Generate from raw transcript
+                        updated_doc = generate_agent_os_from_rant(
+                            rant_text=raw_transcript,
+                            openai_api_key=api_key,
+                            project_name=project.name
+                        )
+
+                    st.session_state.agent_os_doc = updated_doc
+                    st.session_state.agent_os_doc_dict = updated_doc.to_dict()
+                    show_success(f"Agent OS updated! ({updated_doc.completion_percentage}% complete)")
+
+                    # Clear rant data
+                    del st.session_state["voice_rant_data"]
+                    st.rerun()
+
+                except Exception as e:
+                    show_error(f"Failed to update Agent OS: {str(e)}")
+
+    with col2:
+        if st.button("New Rant", use_container_width=True):
+            del st.session_state["voice_rant_data"]
+            st.rerun()
+
+    with col3:
+        if st.button("Discard", use_container_width=True):
+            del st.session_state["voice_rant_data"]
+            show_info("Rant discarded")
+            st.rerun()
+
+
+def render_voice_rant_history(
+    db: Session,
+    project: Project,
+    doc: AgentOSDocument
+) -> None:
+    """
+    Render history of voice rants for a project.
+
+    Args:
+        db: Database session
+        project: Current project
+        doc: Current AgentOSDocument
+    """
+    st.subheader("Voice Rant History")
+    st.caption("Previously recorded voice rants for this project.")
+
+    voice_rants = get_voice_rants(db, project.id, limit=10)
+
+    if not voice_rants:
+        st.info("No voice rants recorded yet. Use Click-to-Rant or Real-Time Tagging to create one.")
+        return
+
+    for rant in voice_rants:
+        mode_label = "Click-to-Rant" if rant.mode.value == "click_to_rant" else "Real-Time Tag"
+        duration_str = format_duration(rant.total_duration) if rant.total_duration else "N/A"
+
+        with st.expander(
+            f"{rant.created_at.strftime('%Y-%m-%d %H:%M')} | {mode_label} | {rant.word_count} words | {duration_str}"
+        ):
+            # Raw transcript
+            st.markdown("**Raw Transcript:**")
+            st.text_area(
+                "transcript",
+                value=rant.raw_transcript,
+                height=150,
+                disabled=True,
+                key=f"vrant_raw_{rant.id}",
+                label_visibility="collapsed"
+            )
+
+            # Tagged segments if available
+            if rant.tagged_segments:
+                st.markdown("**Tagged Segments:**")
+                for seg in rant.tagged_segments:
+                    st.markdown(f"- **{seg.get('section')}**: {seg.get('text', '')[:100]}...")
+
+            # Load into Agent OS
+            if rant.agent_os_doc:
+                if st.button("Load Agent OS", key=f"load_vrant_{rant.id}"):
+                    loaded_doc = AgentOSDocument.from_dict(rant.agent_os_doc)
+                    st.session_state.agent_os_doc = loaded_doc
+                    st.session_state.agent_os_doc_dict = rant.agent_os_doc
+                    show_success("Loaded Agent OS from voice rant!")
+                    st.rerun()
 
 
 def render_gap_percentage_display(
@@ -904,9 +1599,10 @@ def render_agent_os_panel(
 
     st.divider()
 
-    # Create sub-tabs
-    tree_tab, generate_tab, gaps_tab, raw_tab = st.tabs([
+    # Create sub-tabs (including new voice input tabs for Phase 2B)
+    tree_tab, voice_tab, generate_tab, gaps_tab, raw_tab = st.tabs([
         "Live Tree View",
+        "Voice Input",
         "Generate",
         "Gaps Detail",
         "Raw Rant"
@@ -924,6 +1620,36 @@ def render_agent_os_panel(
         if doc.completion_percentage > 0:
             st.divider()
             render_export_options(doc)
+
+    with voice_tab:
+        # =====================================================================
+        # VOICE INPUT METHODS (Phase 2B - Mechanisms 2 & 3)
+        # =====================================================================
+        st.markdown("### Voice-First Input")
+        st.markdown("""
+        Fill your Agent OS spec using your voice! Choose a method below:
+        - **Click-to-Rant**: Tap a section, speak to fill just that section
+        - **Real-Time Tagging**: One continuous rant, tap buttons to mark sections as you go
+        """)
+
+        # Voice method selector
+        voice_method = st.radio(
+            "Select Input Method",
+            ["Click-to-Rant (Tap and Talk)", "Real-Time Tagging (Tag While Ranting)"],
+            horizontal=True,
+            key="voice_method_selector"
+        )
+
+        st.divider()
+
+        if "Click-to-Rant" in voice_method:
+            render_click_to_rant_panel(doc, db, project)
+        else:
+            render_real_time_tagging_panel(doc, db, project)
+
+        # Voice rant history at bottom
+        st.divider()
+        render_voice_rant_history(db, project, doc)
 
     with generate_tab:
         # Consolidate button and generation

@@ -499,6 +499,58 @@ class RawRant(Base, TimestampMixin):
         return f"<RawRant(id={self.id}, project_id={self.project_id}, words={self.word_count})>"
 
 
+class VoiceInputMode(str, enum.Enum):
+    """Mode of voice input for Agent OS."""
+    CLICK_TO_RANT = "click_to_rant"  # Tap section, then speak
+    REAL_TIME_TAG = "real_time_tag"  # Continuous rant with inline tagging
+
+
+class VoiceRant(Base, TimestampMixin):
+    """
+    Voice rant with timestamp-based tagging.
+
+    Stores voice recordings with their transcriptions and tag data
+    for Click-to-Rant and Real-Time Tagging features.
+    """
+    __tablename__ = "voice_rants"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    session_id: Mapped[Optional[int]] = mapped_column(ForeignKey("chat_sessions.id"), index=True)
+
+    # The sacred, unmodified raw transcript
+    raw_transcript: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Recording metadata
+    total_duration: Mapped[float] = mapped_column(Float, default=0.0)  # seconds
+    word_count: Mapped[int] = mapped_column(Integer, default=0)
+    mode: Mapped[VoiceInputMode] = mapped_column(
+        SQLEnum(VoiceInputMode),
+        default=VoiceInputMode.REAL_TIME_TAG,
+        nullable=False
+    )
+
+    # Target section for Click-to-Rant mode
+    target_section: Mapped[Optional[str]] = mapped_column(String(100))
+
+    # Tag events as JSON array: [{section, timestamp, created_at}, ...]
+    tag_events: Mapped[Optional[list]] = mapped_column(JSON)
+
+    # Tagged segments as JSON array: [{section, text, start_time, end_time}, ...]
+    tagged_segments: Mapped[Optional[list]] = mapped_column(JSON)
+
+    # Whisper API segments for detailed timestamp data
+    whisper_segments: Mapped[Optional[list]] = mapped_column(JSON)
+
+    # Optional Agent OS document reference (JSON)
+    agent_os_doc: Mapped[Optional[dict]] = mapped_column(JSON)
+
+    extra_metadata: Mapped[Optional[dict]] = mapped_column("metadata", JSON)
+
+    def __repr__(self):
+        return f"<VoiceRant(id={self.id}, project_id={self.project_id}, mode={self.mode}, duration={self.total_duration:.1f}s)>"
+
+
 # =============================================================================
 # ROUNDTABLE CODER MODELS
 # =============================================================================

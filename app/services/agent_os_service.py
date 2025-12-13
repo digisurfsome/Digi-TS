@@ -1669,3 +1669,432 @@ def get_flash_label_sections() -> List[str]:
         "Technical Specification",
         "Success Metrics"
     ]
+
+
+# ============================================================================
+# VOICE RANT HANDLING (Phase 2B)
+# ============================================================================
+
+
+# Section key mapping for voice input
+VOICE_SECTION_MAP = {
+    "Overview": "overview",
+    "Requirements (Functional)": "requirements_functional",
+    "Requirements (Technical)": "requirements_technical",
+    "User Stories": "user_stories",
+    "Acceptance Criteria": "acceptance_criteria",
+    "Technical Specification": "technical_spec",
+    "Success Metrics": "success_metrics",
+    "Questions": "questions",
+    # Shorter versions
+    "Functional Req": "requirements_functional",
+    "Technical Req": "requirements_technical",
+    "Tech Spec": "technical_spec",
+    "Metrics": "success_metrics",
+}
+
+
+def save_voice_rant(
+    db: DBSession,
+    project_id: int,
+    raw_transcript: str,
+    total_duration: float,
+    mode: str = "real_time_tag",
+    target_section: Optional[str] = None,
+    tag_events: Optional[List[Dict]] = None,
+    tagged_segments: Optional[List[Dict]] = None,
+    whisper_segments: Optional[List[Dict]] = None,
+    session_id: Optional[int] = None,
+    agent_os_doc: Optional[Dict] = None
+) -> Any:
+    """
+    Save a voice rant to database.
+
+    Args:
+        db: Database session
+        project_id: Project ID
+        raw_transcript: Full transcribed text (SACRED - never modified)
+        total_duration: Recording duration in seconds
+        mode: Voice input mode (click_to_rant or real_time_tag)
+        target_section: Target section for click_to_rant mode
+        tag_events: List of tag events [{section, timestamp}, ...]
+        tagged_segments: List of tagged segments [{section, text, start_time, end_time}, ...]
+        whisper_segments: Raw Whisper API segments
+        session_id: Optional chat session ID
+        agent_os_doc: Optional generated Agent OS document
+
+    Returns:
+        Created VoiceRant object
+    """
+    from app.core.models import VoiceRant, VoiceInputMode
+
+    word_count = len(raw_transcript.split()) if raw_transcript else 0
+
+    voice_mode = VoiceInputMode.CLICK_TO_RANT if mode == "click_to_rant" else VoiceInputMode.REAL_TIME_TAG
+
+    voice_rant = VoiceRant(
+        project_id=project_id,
+        session_id=session_id,
+        raw_transcript=raw_transcript,
+        total_duration=total_duration,
+        word_count=word_count,
+        mode=voice_mode,
+        target_section=target_section,
+        tag_events=tag_events,
+        tagged_segments=tagged_segments,
+        whisper_segments=whisper_segments,
+        agent_os_doc=agent_os_doc
+    )
+
+    db.add(voice_rant)
+    db.commit()
+    db.refresh(voice_rant)
+
+    ProcessLog.success(
+        "AgentOS",
+        f"Saved voice rant ({word_count} words, {total_duration:.1f}s)",
+        details={"id": voice_rant.id, "project_id": project_id, "mode": mode}
+    )
+
+    return voice_rant
+
+
+def get_voice_rants(
+    db: DBSession,
+    project_id: int,
+    session_id: Optional[int] = None,
+    limit: int = 50
+) -> List[Any]:
+    """
+    Get voice rants for a project.
+
+    Args:
+        db: Database session
+        project_id: Project ID
+        session_id: Optional filter by session
+        limit: Maximum number to return
+
+    Returns:
+        List of VoiceRant objects
+    """
+    from app.core.models import VoiceRant
+
+    query = db.query(VoiceRant).filter(VoiceRant.project_id == project_id)
+
+    if session_id:
+        query = query.filter(VoiceRant.session_id == session_id)
+
+    return query.order_by(VoiceRant.created_at.desc()).limit(limit).all()
+
+
+def add_tagged_content_to_document(
+    doc: AgentOSDocument,
+    section_key: str,
+    content: str,
+    feature_name: Optional[str] = None
+) -> AgentOSDocument:
+    """
+    Add voice-transcribed content to a specific Agent OS section.
+
+    Used by Click-to-Rant to add content to a target section.
+
+    Args:
+        doc: AgentOSDocument to update
+        section_key: Internal section key (e.g., "requirements_functional")
+        content: Text content to add
+        feature_name: Optional feature name (defaults to first feature or "General")
+
+    Returns:
+        Updated AgentOSDocument
+    """
+    if not content or not content.strip():
+        return doc
+
+    content = content.strip()
+
+    # Ensure at least one feature exists
+    if not doc.features:
+        doc.features.append({
+            "name": feature_name or "General",
+            "overview": "",
+            "requirements_functional": [],
+            "requirements_technical": [],
+            "user_stories": [],
+            "acceptance_criteria": [],
+            "technical_spec": {},
+            "success_metrics": ""
+        })
+
+    # Find the target feature
+    target_feature = doc.features[0]
+    if feature_name:
+        for f in doc.features:
+            if f.get("name") == feature_name:
+                target_feature = f
+                break
+
+    # Add content to appropriate section
+    if section_key == "overview":
+        if target_feature.get("overview"):
+            target_feature["overview"] += "\n\n" + content
+        else:
+            target_feature["overview"] = content
+
+    elif section_key == "requirements_functional":
+        # Split by sentences or bullet points
+        items = _split_into_items(content)
+        for item in items:
+            if item not in target_feature.get("requirements_functional", []):
+                target_feature.setdefault("requirements_functional", []).append(item)
+
+    elif section_key == "requirements_technical":
+        items = _split_into_items(content)
+        for item in items:
+            if item not in target_feature.get("requirements_technical", []):
+                target_feature.setdefault("requirements_technical", []).append(item)
+
+    elif section_key == "user_stories":
+        items = _split_into_items(content)
+        for item in items:
+            if item not in target_feature.get("user_stories", []):
+                target_feature.setdefault("user_stories", []).append(item)
+
+    elif section_key == "acceptance_criteria":
+        items = _split_into_items(content)
+        for item in items:
+            if item not in target_feature.get("acceptance_criteria", []):
+                target_feature.setdefault("acceptance_criteria", []).append(item)
+
+    elif section_key == "technical_spec":
+        # Try to categorize technical spec content
+        tech_spec = target_feature.setdefault("technical_spec", {})
+        content_lower = content.lower()
+
+        if "api" in content_lower or "endpoint" in content_lower:
+            if tech_spec.get("api_endpoints"):
+                tech_spec["api_endpoints"] += "\n" + content
+            else:
+                tech_spec["api_endpoints"] = content
+        elif "model" in content_lower or "data" in content_lower or "database" in content_lower:
+            if tech_spec.get("data_models"):
+                tech_spec["data_models"] += "\n" + content
+            else:
+                tech_spec["data_models"] = content
+        elif "depend" in content_lower or "library" in content_lower or "package" in content_lower:
+            if tech_spec.get("dependencies"):
+                tech_spec["dependencies"] += "\n" + content
+            else:
+                tech_spec["dependencies"] = content
+        elif "edge" in content_lower or "error" in content_lower or "exception" in content_lower:
+            if tech_spec.get("edge_cases"):
+                tech_spec["edge_cases"] += "\n" + content
+            else:
+                tech_spec["edge_cases"] = content
+        else:
+            # Default: add to general tech spec
+            if tech_spec.get("other"):
+                tech_spec["other"] += "\n" + content
+            else:
+                tech_spec["other"] = content
+
+    elif section_key == "success_metrics":
+        if target_feature.get("success_metrics"):
+            target_feature["success_metrics"] += "\n\n" + content
+        else:
+            target_feature["success_metrics"] = content
+
+    elif section_key == "questions":
+        items = _split_into_items(content)
+        for item in items:
+            if item not in doc.questions:
+                doc.questions.append(item)
+
+    # Standards layer
+    elif section_key == "tech_stack":
+        items = _split_into_items(content)
+        for item in items:
+            if item not in doc.tech_stack:
+                doc.tech_stack.append(item)
+
+    elif section_key == "architecture":
+        items = _split_into_items(content)
+        for item in items:
+            if item not in doc.architecture:
+                doc.architecture.append(item)
+
+    elif section_key == "coding_patterns":
+        items = _split_into_items(content)
+        for item in items:
+            if item not in doc.coding_patterns:
+                doc.coding_patterns.append(item)
+
+    # Product layer
+    elif section_key == "vision":
+        if doc.vision:
+            doc.vision += "\n\n" + content
+        else:
+            doc.vision = content
+
+    elif section_key == "target_users":
+        items = _split_into_items(content)
+        for item in items:
+            if item not in doc.target_users:
+                doc.target_users.append(item)
+
+    elif section_key == "use_cases":
+        items = _split_into_items(content)
+        for item in items:
+            if item not in doc.use_cases:
+                doc.use_cases.append(item)
+
+    # Recalculate completion
+    doc.calculate_completion()
+
+    ProcessLog.info(
+        "AgentOS",
+        f"Added voice content to {section_key}",
+        details={"chars": len(content), "feature": target_feature.get("name")}
+    )
+
+    return doc
+
+
+def _split_into_items(text: str) -> List[str]:
+    """
+    Split text into list items.
+
+    Handles various formats:
+    - Numbered lists (1. 2. 3.)
+    - Bullet points (- * +)
+    - Sentences
+
+    Args:
+        text: Text to split
+
+    Returns:
+        List of individual items
+    """
+    import re
+
+    # First try to split by common list patterns
+    # Numbered: 1. or 1)
+    numbered_pattern = r'(?:^|\n)\s*\d+[\.\)]\s*'
+    # Bullets: - * +
+    bullet_pattern = r'(?:^|\n)\s*[\-\*\+]\s*'
+
+    # Check if text has numbered or bullet format
+    if re.search(numbered_pattern, text) or re.search(bullet_pattern, text):
+        # Split by patterns
+        items = re.split(r'(?:^|\n)\s*(?:\d+[\.\)]|[\-\*\+])\s*', text)
+        items = [item.strip() for item in items if item.strip()]
+        return items
+
+    # Otherwise try to split by sentences
+    # Simple sentence split (not perfect but good enough for voice input)
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    sentences = [s.strip() for s in sentences if s.strip()]
+
+    # If we get just one item or very few, return as-is
+    if len(sentences) <= 1:
+        return [text.strip()] if text.strip() else []
+
+    return sentences
+
+
+def generate_agent_os_from_tagged_rant(
+    tagged_segments: List[Dict],
+    raw_transcript: str,
+    openai_api_key: str,
+    project_name: Optional[str] = None,
+    model: str = "gpt-4-turbo-preview",
+    use_ai_classification: bool = True
+) -> AgentOSDocument:
+    """
+    Generate Agent OS document from tagged voice rant.
+
+    Args:
+        tagged_segments: List of {section, text, start_time, end_time}
+        raw_transcript: Complete unmodified transcript
+        openai_api_key: OpenAI API key
+        project_name: Optional project name
+        model: Model to use for AI classification
+        use_ai_classification: Whether to use AI to enhance classification
+
+    Returns:
+        Generated AgentOSDocument
+    """
+    ProcessLog.info("AgentOS", "Generating Agent OS from tagged voice rant")
+
+    # Create base document
+    doc = AgentOSDocument(
+        name=project_name or "Voice Rant Project",
+        raw_rant=raw_transcript
+    )
+
+    # Process each tagged segment
+    for segment in tagged_segments:
+        section_display = segment.get("section", "")
+        text = segment.get("text", "")
+
+        if not text:
+            continue
+
+        # Map display name to section key
+        section_key = VOICE_SECTION_MAP.get(section_display, section_display.lower().replace(" ", "_"))
+
+        # If AI classification is enabled and we have an API key, enhance the content
+        if use_ai_classification and openai_api_key:
+            # Classify this segment for more precise placement
+            items, suggested_name = classify_text(text, openai_api_key, model)
+
+            if items:
+                doc = _merge_items_into_document(doc, items)
+
+                # Use suggested name if we don't have one
+                if not project_name and suggested_name and suggested_name != "Untitled Project":
+                    doc.name = suggested_name
+            else:
+                # Fall back to direct placement
+                doc = add_tagged_content_to_document(doc, section_key, text)
+        else:
+            # Direct placement without AI enhancement
+            doc = add_tagged_content_to_document(doc, section_key, text)
+
+    doc.calculate_completion()
+
+    ProcessLog.success(
+        "AgentOS",
+        f"Generated Agent OS from tagged rant: {doc.name} ({doc.completion_percentage}% complete)",
+        details={"segments": len(tagged_segments), "completion": doc.completion_percentage}
+    )
+
+    return doc
+
+
+def get_organized_view(
+    tagged_segments: List[Dict]
+) -> Dict[str, str]:
+    """
+    Get organized content view from tagged segments.
+
+    Groups all text by section.
+
+    Args:
+        tagged_segments: List of {section, text, start_time, end_time}
+
+    Returns:
+        Dict mapping section name to concatenated text
+    """
+    organized = {}
+
+    for segment in tagged_segments:
+        section = segment.get("section", "Untagged")
+        text = segment.get("text", "")
+
+        if section not in organized:
+            organized[section] = ""
+
+        organized[section] += text + " "
+
+    # Clean up whitespace
+    return {k: v.strip() for k, v in organized.items() if v.strip()}

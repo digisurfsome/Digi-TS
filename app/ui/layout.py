@@ -232,6 +232,155 @@ def render_mini_gap_indicator() -> None:
         """, unsafe_allow_html=True)
 
 
+# ============================================================================
+# VOICE INPUT STATUS INDICATORS (Phase 2B)
+# ============================================================================
+
+
+def render_voice_recording_indicator() -> None:
+    """
+    Render a voice recording status indicator.
+
+    Shows when voice recording is active (for Click-to-Rant or Real-Time Tagging).
+    Displays in a non-intrusive way during chat sessions.
+    """
+    # Check for Click-to-Rant recording
+    target_section = st.session_state.get("voice_target_section")
+    if target_section:
+        st.markdown(f"""
+        <div style="
+            background: linear-gradient(90deg, #0ea5e9, #0284c7);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 8px;
+            margin: 8px 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 14px;
+        ">
+            <span style="animation: pulse 1s infinite;">MIC</span>
+            <span>Recording to: <strong>{target_section}</strong></span>
+            <span style="margin-left: auto; font-size: 12px; opacity: 0.8;">Click-to-Rant mode</span>
+        </div>
+        <style>
+            @keyframes pulse {{
+                0% {{ opacity: 1; }}
+                50% {{ opacity: 0.5; }}
+                100% {{ opacity: 1; }}
+            }}
+        </style>
+        """, unsafe_allow_html=True)
+        return
+
+    # Check for Real-Time Tagging recording
+    is_realtime_recording = st.session_state.get("realtime_recording_active", False)
+    if is_realtime_recording:
+        import time
+        start_time = st.session_state.get("realtime_recording_start", 0)
+        elapsed = time.time() - start_time if start_time else 0
+        minutes = int(elapsed // 60)
+        seconds = int(elapsed % 60)
+        elapsed_str = f"{minutes:02d}:{seconds:02d}"
+
+        current_tag = st.session_state.get("realtime_current_tag", "None")
+        tag_count = len(st.session_state.get("realtime_tag_events", []))
+
+        st.markdown(f"""
+        <div style="
+            background: linear-gradient(90deg, #dc2626, #ef4444);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 8px;
+            margin: 8px 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 14px;
+        ">
+            <span style="animation: pulse 1s infinite; font-weight: bold;">REC {elapsed_str}</span>
+            <span>|</span>
+            <span>Tag: <strong>{current_tag}</strong></span>
+            <span>|</span>
+            <span>{tag_count} tags</span>
+            <span style="margin-left: auto; font-size: 12px; opacity: 0.8;">Real-Time Tagging mode</span>
+        </div>
+        <style>
+            @keyframes pulse {{
+                0% {{ opacity: 1; }}
+                50% {{ opacity: 0.5; }}
+                100% {{ opacity: 1; }}
+            }}
+        </style>
+        """, unsafe_allow_html=True)
+
+
+def render_voice_mode_selector(compact: bool = True) -> Optional[str]:
+    """
+    Render a compact voice mode selector.
+
+    Can be shown in the chat panel for quick voice input access.
+
+    Args:
+        compact: If True, show a minimal selector
+
+    Returns:
+        Selected mode if changed, None otherwise
+    """
+    if compact:
+        cols = st.columns([1, 1, 2])
+        with cols[0]:
+            ctr_btn = st.button("Click-to-Rant", key="quick_ctr", use_container_width=True)
+        with cols[1]:
+            rtt_btn = st.button("Real-Time Tag", key="quick_rtt", use_container_width=True)
+
+        if ctr_btn:
+            return "click_to_rant"
+        if rtt_btn:
+            return "real_time_tag"
+
+    return None
+
+
+def is_voice_recording_active() -> bool:
+    """
+    Check if any voice recording mode is currently active.
+
+    Returns:
+        True if recording is active
+    """
+    # Check Click-to-Rant
+    if st.session_state.get("voice_target_section"):
+        return True
+
+    # Check Real-Time Tagging
+    if st.session_state.get("realtime_recording_active"):
+        return True
+
+    return False
+
+
+def clear_voice_recording_state() -> None:
+    """
+    Clear all voice recording state.
+
+    Used when canceling or completing a recording.
+    """
+    keys_to_clear = [
+        "voice_target_section",
+        "voice_input_mode",
+        "voice_recording_active",
+        "realtime_recording_active",
+        "realtime_recording_start",
+        "realtime_tag_events",
+        "realtime_current_tag",
+    ]
+
+    for key in keys_to_clear:
+        if key in st.session_state:
+            del st.session_state[key]
+
+
 # Project Selection Components
 
 def render_user_selector(db: Session, users: List[UserProfile]) -> Optional[UserProfile]:
@@ -897,6 +1046,13 @@ def render_chat_panel(
     # Show compact flash labels if Agent OS doc exists
     if "agent_os_doc" in st.session_state:
         render_compact_flash_labels()
+
+    # =========================================================================
+    # VOICE RECORDING INDICATOR (Phase 2B)
+    # =========================================================================
+    # Show voice recording status if active
+    if is_voice_recording_active():
+        render_voice_recording_indicator()
 
     if new_session_clicked:
         try:
