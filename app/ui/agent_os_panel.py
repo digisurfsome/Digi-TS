@@ -23,12 +23,21 @@ from app.services.agent_os_service import (
     AgentOSSection,
     AgentOSSubsection,
     ClassifiedItem,
+    GapItem,
+    GapSeverity,
     classify_text,
     generate_agent_os_from_rant,
     create_empty_template,
     get_section_icon,
     get_subsection_icon,
     get_classification_summary,
+    detect_gaps,
+    calculate_completion_percentage,
+    get_completion_color,
+    generate_fill_prompts,
+    process_fill_response,
+    get_flash_label_sections,
+    SECTION_MINIMUMS,
 )
 from app.ui.layout import show_success, show_error, show_warning, show_info
 
@@ -251,6 +260,364 @@ def render_live_classification(items: List[ClassifiedItem]) -> None:
             )
             st.caption(f"*{item.reasoning}*")
             st.divider()
+
+
+def render_flash_labels(doc: AgentOSDocument, feature_name: Optional[str] = None) -> None:
+    """
+    Render Flash Labels showing which Agent OS sections need filling.
+
+    Labels appear as pill-shaped tags with visual states:
+    - Empty (bright/pulsing): Section needs content
+    - Partial (dimmed): Section has some content but below minimum
+    - Complete (green checkmark): Section is complete
+
+    Args:
+        doc: AgentOSDocument to check
+        feature_name: Optional specific feature to check
+    """
+    # Get section statuses
+    statuses = doc.get_section_status(feature_name)
+
+    # Define colors for each state
+    state_styles = {
+        "empty": {
+            "bg": "#ff6b6b",
+            "color": "white",
+            "icon": "[ ]",
+            "border": "2px solid #ff4757"
+        },
+        "partial": {
+            "bg": "#ffa502",
+            "color": "white",
+            "icon": "[~]",
+            "border": "2px solid #ff9f43"
+        },
+        "complete": {
+            "bg": "#26de81",
+            "color": "white",
+            "icon": "[x]",
+            "border": "2px solid #20bf6b"
+        }
+    }
+
+    # Build the flash labels HTML
+    labels_html = '<div style="display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0;">'
+
+    for section_name, status in statuses.items():
+        style = state_styles.get(status, state_styles["empty"])
+
+        # Add pulsing animation for empty sections
+        animation = ""
+        if status == "empty":
+            animation = "animation: pulse 2s infinite;"
+
+        labels_html += f'''
+        <span style="
+            background: {style['bg']};
+            color: {style['color']};
+            padding: 4px 12px;
+            border-radius: 16px;
+            font-size: 12px;
+            font-weight: 500;
+            border: {style['border']};
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            {animation}
+        ">
+            <span style="font-family: monospace;">{style['icon']}</span>
+            {section_name}
+        </span>
+        '''
+
+    labels_html += '</div>'
+
+    # Add CSS for pulse animation
+    css = '''
+    <style>
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.6; }
+            100% { opacity: 1; }
+        }
+    </style>
+    '''
+
+    st.markdown(css + labels_html, unsafe_allow_html=True)
+
+
+def render_gap_percentage_display(
+    doc: AgentOSDocument,
+    db: Session,
+    expanded: bool = False
+) -> None:
+    """
+    Render the gap percentage display with expandable details.
+
+    Shows:
+    - Circular/bar progress indicator
+    - Percentage prominently displayed
+    - Color coding (red <50%, yellow 50-80%, green >80%)
+    - Expandable details section
+    - "Help me complete" button
+
+    Args:
+        doc: AgentOSDocument to display
+        db: Database session for settings
+        expanded: Whether details are expanded by default
+    """
+    # Calculate completion
+    percentage = doc.calculate_completion()
+    color = get_completion_color(percentage)
+
+    # Get gap summary
+    gap_summary = doc.get_gap_summary()
+
+    # Color mapping for display
+    color_map = {
+        "red": {"bg": "#fee2e2", "text": "#dc2626", "bar": "#ef4444"},
+        "orange": {"bg": "#fef3c7", "text": "#d97706", "bar": "#f59e0b"},
+        "green": {"bg": "#d1fae5", "text": "#059669", "bar": "#10b981"}
+    }
+
+    colors = color_map.get(color, color_map["red"])
+
+    # Main percentage display
+    col1, col2, col3 = st.columns([1, 2, 1])
+
+    with col2:
+        # Large percentage display
+        st.markdown(f"""
+        <div style="
+            text-align: center;
+            padding: 20px;
+            background: {colors['bg']};
+            border-radius: 12px;
+            margin: 10px 0;
+        ">
+            <div style="font-size: 48px; font-weight: bold; color: {colors['text']};">
+                {percentage}%
+            </div>
+            <div style="font-size: 14px; color: #666; margin-top: 8px;">
+                Agent OS Complete
+            </div>
+            <div style="font-size: 12px; color: #888; margin-top: 4px;">
+                {gap_summary['total_gaps']} items missing across {len(set(g.section for g in gap_summary['gaps']))} sections
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # Progress bar
+    st.progress(percentage / 100)
+
+    # Gap count badges
+    if gap_summary['total_gaps'] > 0:
+        col1, col2 = st.columns(2)
+        with col1:
+            if gap_summary['critical_count'] > 0:
+                st.markdown(f"**{gap_summary['critical_count']}** critical gaps")
+        with col2:
+            if gap_summary['minor_count'] > 0:
+                st.markdown(f"**{gap_summary['minor_count']}** minor gaps")
+
+    # Expandable gap details
+    with st.expander("View Gaps", expanded=expanded):
+        if gap_summary['gaps']:
+            # Group gaps by section
+            gaps_by_section: Dict[str, List[GapItem]] = {}
+            for gap in gap_summary['gaps']:
+                section_key = gap.section
+                if section_key not in gaps_by_section:
+                    gaps_by_section[section_key] = []
+                gaps_by_section[section_key].append(gap)
+
+            for section, gaps in gaps_by_section.items():
+                st.markdown(f"**{section.replace('_', ' ').title()}**")
+                for gap in gaps:
+                    severity_icon = "X" if gap.severity == GapSeverity.CRITICAL else "!"
+                    severity_color = "#dc2626" if gap.severity == GapSeverity.CRITICAL else "#d97706"
+
+                    st.markdown(f"""
+                    <div style="
+                        display: flex;
+                        align-items: center;
+                        gap: 8px;
+                        padding: 8px 12px;
+                        background: #f9fafb;
+                        border-radius: 6px;
+                        margin: 4px 0;
+                        border-left: 3px solid {severity_color};
+                    ">
+                        <span style="color: {severity_color}; font-weight: bold;">[{severity_icon}]</span>
+                        <span>{gap.display_name}</span>
+                        <span style="color: #888; font-size: 12px;">
+                            ({gap.current_count}/{gap.minimum_required})
+                        </span>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    st.caption(f"*Prompt: {gap.prompt}*")
+
+                st.divider()
+        else:
+            st.success("No gaps detected! Your Agent OS document is complete.")
+
+
+def render_fill_request_ui(
+    doc: AgentOSDocument,
+    db: Session,
+    project: Project
+) -> Optional[AgentOSDocument]:
+    """
+    Render the Fill Request UI for AI-assisted gap filling.
+
+    When user clicks "Help me complete":
+    1. AI generates questions for missing sections
+    2. Questions are displayed (not interrupting)
+    3. User can answer when ready
+    4. Answers auto-populate Agent OS sections
+
+    Args:
+        doc: AgentOSDocument to fill
+        db: Database session
+        project: Current project
+
+    Returns:
+        Updated AgentOSDocument if changes were made, None otherwise
+    """
+    settings = get_all_settings(db)
+    api_key = settings.get("OPENAI_API_KEY", "")
+    model = settings.get("DEFAULT_SUMMARY_MODEL", "gpt-4-turbo-preview")
+
+    # Check if we have fill prompts in session state
+    fill_prompts_key = f"fill_prompts_{project.id}"
+    current_prompt_key = f"current_fill_prompt_{project.id}"
+    fill_response_key = f"fill_response_{project.id}"
+
+    # Help me complete button
+    col1, col2 = st.columns([1, 3])
+
+    with col1:
+        help_btn = st.button(
+            "Help Me Complete",
+            type="secondary",
+            use_container_width=True,
+            help="Generate AI questions to help fill gaps"
+        )
+
+    # Generate fill prompts if button clicked
+    if help_btn:
+        with st.spinner("Generating questions to help fill gaps..."):
+            prompts = generate_fill_prompts(doc, api_key, model, max_questions=5)
+            if prompts:
+                st.session_state[fill_prompts_key] = prompts
+                st.session_state[current_prompt_key] = 0
+                show_success(f"Generated {len(prompts)} questions to help you complete the spec!")
+            else:
+                show_info("No gaps to fill - your document is looking good!")
+
+    # Display fill prompts if available
+    if fill_prompts_key in st.session_state and st.session_state[fill_prompts_key]:
+        prompts = st.session_state[fill_prompts_key]
+        current_idx = st.session_state.get(current_prompt_key, 0)
+
+        if current_idx < len(prompts):
+            prompt = prompts[current_idx]
+
+            st.markdown("---")
+            st.markdown("### Fill Gap Question")
+
+            # Question card
+            st.markdown(f"""
+            <div style="
+                background: #f0f9ff;
+                border: 1px solid #0ea5e9;
+                border-radius: 8px;
+                padding: 16px;
+                margin: 12px 0;
+            ">
+                <div style="font-size: 12px; color: #0369a1; margin-bottom: 8px;">
+                    Section: {prompt.get('section', 'Unknown')}
+                </div>
+                <div style="font-size: 16px; font-weight: 500; color: #0c4a6e;">
+                    {prompt.get('question', 'No question')}
+                </div>
+                <div style="font-size: 12px; color: #64748b; margin-top: 8px;">
+                    {prompt.get('context', '')}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # Progress indicator
+            st.caption(f"Question {current_idx + 1} of {len(prompts)}")
+            st.progress((current_idx + 1) / len(prompts))
+
+            # Answer input
+            answer = st.text_area(
+                "Your Answer",
+                key=fill_response_key,
+                placeholder="Type your answer here... (speak naturally, as if explaining to a colleague)",
+                height=100
+            )
+
+            col1, col2, col3 = st.columns([1, 1, 2])
+
+            with col1:
+                submit_btn = st.button("Submit", type="primary", use_container_width=True)
+
+            with col2:
+                skip_btn = st.button("Skip", use_container_width=True)
+
+            with col3:
+                dismiss_btn = st.button("Dismiss All", use_container_width=True)
+
+            # Handle submit
+            if submit_btn and answer and answer.strip():
+                with st.spinner("Processing your answer..."):
+                    try:
+                        updated_doc = process_fill_response(
+                            doc=doc,
+                            section=prompt.get('section', ''),
+                            response_text=answer,
+                            openai_api_key=api_key,
+                            model=model
+                        )
+
+                        # Move to next prompt
+                        st.session_state[current_prompt_key] = current_idx + 1
+
+                        # Update session state doc
+                        st.session_state.agent_os_doc = updated_doc
+                        st.session_state.agent_os_doc_dict = updated_doc.to_dict()
+
+                        show_success("Answer processed and added to Agent OS!")
+                        st.rerun()
+
+                    except Exception as e:
+                        show_error(f"Failed to process answer: {str(e)}")
+
+            # Handle skip
+            if skip_btn:
+                st.session_state[current_prompt_key] = current_idx + 1
+                st.rerun()
+
+            # Handle dismiss
+            if dismiss_btn:
+                del st.session_state[fill_prompts_key]
+                del st.session_state[current_prompt_key]
+                if fill_response_key in st.session_state:
+                    del st.session_state[fill_response_key]
+                st.rerun()
+
+        else:
+            # All prompts answered
+            st.success("All gap questions answered!")
+            if st.button("Generate More Questions"):
+                del st.session_state[fill_prompts_key]
+                del st.session_state[current_prompt_key]
+                st.rerun()
+
+    return None
 
 
 def render_consolidate_button(
@@ -506,13 +873,6 @@ def render_agent_os_panel(
         """
     )
 
-    # Create sub-tabs
-    tree_tab, generate_tab, raw_tab = st.tabs([
-        "Live Tree View",
-        "Generate",
-        "Raw Rant"
-    ])
-
     # Check if we have a document in session state
     doc = None
     if "agent_os_doc" in st.session_state:
@@ -521,6 +881,36 @@ def render_agent_os_panel(
         # Create empty document
         doc = create_empty_template(project.name)
         st.session_state.agent_os_doc = doc
+
+    # =========================================================================
+    # FLASH LABELS - Always visible at top (Mechanism 1)
+    # =========================================================================
+    st.markdown("#### Section Status")
+    render_flash_labels(doc)
+
+    st.divider()
+
+    # =========================================================================
+    # GAP PERCENTAGE DISPLAY (Mechanism 15)
+    # =========================================================================
+    render_gap_percentage_display(doc, db, expanded=False)
+
+    st.divider()
+
+    # =========================================================================
+    # FILL REQUEST UI (Mechanism 15 continued)
+    # =========================================================================
+    render_fill_request_ui(doc, db, project)
+
+    st.divider()
+
+    # Create sub-tabs
+    tree_tab, generate_tab, gaps_tab, raw_tab = st.tabs([
+        "Live Tree View",
+        "Generate",
+        "Gaps Detail",
+        "Raw Rant"
+    ])
 
     with tree_tab:
         # Show live tree view
@@ -542,8 +932,162 @@ def render_agent_os_panel(
             doc = new_doc
             st.rerun()
 
+    with gaps_tab:
+        # Detailed gap analysis view (Mechanism 7)
+        render_gap_analysis_view(doc, db, project)
+
     with raw_tab:
         render_raw_rant_view(db, project, doc)
+
+
+def render_gap_analysis_view(
+    doc: AgentOSDocument,
+    db: Session,
+    project: Project
+) -> None:
+    """
+    Render detailed gap analysis view (Mechanism 7).
+
+    Shows:
+    - All gaps with severity levels
+    - Prompts for each gap
+    - Priority ordering
+
+    Args:
+        doc: AgentOSDocument to analyze
+        db: Database session
+        project: Current project
+    """
+    st.subheader("Gap Analysis")
+    st.markdown(
+        """
+        This view shows all sections that need attention.
+        Critical gaps should be addressed first - these are required for a complete spec.
+        """
+    )
+
+    gap_summary = doc.get_gap_summary()
+
+    if not gap_summary['gaps']:
+        st.success("Congratulations! Your Agent OS document has no gaps.")
+        st.balloons()
+        return
+
+    # Summary metrics
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Gaps", gap_summary['total_gaps'])
+    with col2:
+        st.metric("Critical", gap_summary['critical_count'], delta_color="inverse")
+    with col3:
+        st.metric("Minor", gap_summary['minor_count'])
+
+    st.divider()
+
+    # Critical gaps first
+    if gap_summary['critical_gaps']:
+        st.markdown("### Critical Gaps")
+        st.caption("These sections are empty and required for a complete spec.")
+
+        for gap in gap_summary['critical_gaps']:
+            with st.container():
+                col1, col2 = st.columns([3, 1])
+
+                with col1:
+                    st.markdown(f"""
+                    <div style="
+                        background: #fef2f2;
+                        border-left: 4px solid #dc2626;
+                        padding: 12px 16px;
+                        border-radius: 0 8px 8px 0;
+                        margin: 8px 0;
+                    ">
+                        <div style="font-weight: 600; color: #991b1b;">
+                            [X] {gap.display_name}
+                        </div>
+                        <div style="font-size: 14px; color: #7f1d1d; margin-top: 4px;">
+                            {gap.prompt}
+                        </div>
+                        <div style="font-size: 12px; color: #b91c1c; margin-top: 4px;">
+                            {gap.current_count}/{gap.minimum_required} required
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+        st.divider()
+
+    # Minor gaps
+    if gap_summary['minor_gaps']:
+        st.markdown("### Minor Gaps")
+        st.caption("These sections have some content but could use more detail.")
+
+        for gap in gap_summary['minor_gaps']:
+            with st.container():
+                st.markdown(f"""
+                <div style="
+                    background: #fffbeb;
+                    border-left: 4px solid #f59e0b;
+                    padding: 12px 16px;
+                    border-radius: 0 8px 8px 0;
+                    margin: 8px 0;
+                ">
+                    <div style="font-weight: 600; color: #92400e;">
+                        [!] {gap.display_name}
+                    </div>
+                    <div style="font-size: 14px; color: #78350f; margin-top: 4px;">
+                        {gap.prompt}
+                    </div>
+                    <div style="font-size: 12px; color: #b45309; margin-top: 4px;">
+                        {gap.current_count}/{gap.minimum_required} items (partial)
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+    st.divider()
+
+    # Quick fill section
+    st.markdown("### Quick Fill")
+    st.markdown("Select a gap to fill directly:")
+
+    gap_options = [f"{g.display_name} ({g.severity.value})" for g in gap_summary['gaps']]
+    selected_gap_label = st.selectbox("Select gap to fill", gap_options)
+
+    if selected_gap_label:
+        selected_idx = gap_options.index(selected_gap_label)
+        selected_gap = gap_summary['gaps'][selected_idx]
+
+        st.markdown(f"**Prompt:** {selected_gap.prompt}")
+
+        quick_fill_input = st.text_area(
+            "Your response",
+            placeholder="Type your answer here...",
+            height=100,
+            key=f"quick_fill_{selected_gap.section}_{selected_gap.subsection}"
+        )
+
+        if st.button("Add to Agent OS", type="primary"):
+            if quick_fill_input and quick_fill_input.strip():
+                settings = get_all_settings(db)
+                api_key = settings.get("OPENAI_API_KEY", "")
+                model = settings.get("DEFAULT_SUMMARY_MODEL", "gpt-4-turbo-preview")
+
+                with st.spinner("Processing..."):
+                    try:
+                        updated_doc = process_fill_response(
+                            doc=doc,
+                            section=selected_gap.display_name,
+                            response_text=quick_fill_input,
+                            openai_api_key=api_key,
+                            model=model
+                        )
+                        st.session_state.agent_os_doc = updated_doc
+                        st.session_state.agent_os_doc_dict = updated_doc.to_dict()
+                        show_success(f"Added content to {selected_gap.display_name}!")
+                        st.rerun()
+                    except Exception as e:
+                        show_error(f"Failed to add content: {str(e)}")
+            else:
+                show_warning("Please enter some content to add.")
 
 
 def classify_and_update_live(

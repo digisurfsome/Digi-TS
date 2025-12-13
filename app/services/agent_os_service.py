@@ -20,6 +20,69 @@ from app.services.process_log import ProcessLog
 
 
 # ============================================================================
+# GAP DETECTION & COMPLETION TRACKING CONSTANTS
+# ============================================================================
+
+# Section weights for completion percentage calculation
+SECTION_WEIGHTS = {
+    "overview": 10,
+    "requirements_functional": 15,
+    "requirements_technical": 10,
+    "user_stories": 15,
+    "acceptance_criteria": 15,
+    "technical_spec": 20,
+    "success_metrics": 10,
+    "questions": 5,
+}
+
+# Minimum items required for each section
+SECTION_MINIMUMS = {
+    "overview": 1,
+    "requirements_functional": 2,
+    "requirements_technical": 1,
+    "user_stories": 2,
+    "acceptance_criteria": 3,
+    "technical_spec": 1,  # At least one sub-field
+    "success_metrics": 1,
+    "questions": 0,  # Optional
+}
+
+# Fill prompts for each section
+SECTION_FILL_PROMPTS = {
+    "overview": "What does this feature do? Describe it in one or two sentences.",
+    "requirements_functional": "What must this feature do? List the functional requirements.",
+    "requirements_technical": "What technical constraints or requirements are there?",
+    "user_stories": "Who will use this? What do they want to do? (As a X, I want Y, so that Z)",
+    "acceptance_criteria": "How do we know when this is done? What are the test conditions?",
+    "technical_spec_api": "What API endpoints are needed?",
+    "technical_spec_data": "What data models or database changes are needed?",
+    "technical_spec_deps": "What dependencies or integrations are required?",
+    "technical_spec_edge": "What edge cases or error conditions should be handled?",
+    "success_metrics": "How will we measure if this is successful?",
+    "questions": "What questions or unknowns remain?",
+}
+
+
+class GapSeverity(str, Enum):
+    """Severity levels for gaps."""
+    CRITICAL = "critical"  # Empty required section
+    MINOR = "minor"  # Partial (below minimum)
+    NONE = "none"  # Filled
+
+
+@dataclass
+class GapItem:
+    """Represents a gap in the Agent OS document."""
+    section: str
+    subsection: Optional[str]
+    severity: GapSeverity
+    current_count: int
+    minimum_required: int
+    prompt: str
+    display_name: str
+
+
+# ============================================================================
 # AGENT OS STRUCTURE
 # ============================================================================
 
@@ -101,31 +164,382 @@ class AgentOSDocument:
     raw_rant: str = ""
 
     def calculate_completion(self) -> int:
-        """Calculate document completion percentage."""
-        total_sections = 10
-        filled = 0
+        """Calculate document completion percentage using weighted sections."""
+        total_weight = 0
+        earned_weight = 0
 
-        if self.tech_stack:
-            filled += 1
-        if self.architecture:
-            filled += 1
-        if self.coding_patterns:
-            filled += 1
-        if self.vision:
-            filled += 1
-        if self.target_users:
-            filled += 1
-        if self.use_cases:
-            filled += 1
-        if any(self.roadmap.values()):
-            filled += 1
+        # Calculate for each feature (or overall if no features)
         if self.features:
-            filled += 2  # Features count more
-        if self.questions:
-            filled += 1
+            for feature in self.features:
+                feature_scores = self._calculate_feature_completion(feature)
+                for section, score in feature_scores.items():
+                    weight = SECTION_WEIGHTS.get(section, 0)
+                    total_weight += weight
+                    earned_weight += score * weight
+        else:
+            # No features yet - use base structure weights
+            total_weight = sum(SECTION_WEIGHTS.values())
+            earned_weight = 0
 
-        self.completion_percentage = int((filled / total_sections) * 100)
+        # Add standards and product layer contribution (bonus, not required)
+        standards_bonus = 0
+        if self.tech_stack:
+            standards_bonus += 2
+        if self.architecture:
+            standards_bonus += 2
+        if self.coding_patterns:
+            standards_bonus += 1
+
+        product_bonus = 0
+        if self.vision:
+            product_bonus += 3
+        if self.target_users:
+            product_bonus += 2
+        if self.use_cases:
+            product_bonus += 2
+        if any(self.roadmap.values()):
+            product_bonus += 3
+
+        # Calculate percentage
+        if total_weight > 0:
+            base_percentage = (earned_weight / total_weight) * 100
+        else:
+            base_percentage = 0
+
+        # Add bonus (up to 10% extra from standards/product)
+        bonus_percentage = min((standards_bonus + product_bonus), 15)
+        self.completion_percentage = min(int(base_percentage + bonus_percentage), 100)
+
         return self.completion_percentage
+
+    def _calculate_feature_completion(self, feature: Dict) -> Dict[str, float]:
+        """
+        Calculate completion scores for a single feature.
+
+        Returns dict of section -> score (0.0 to 1.0)
+        """
+        scores = {}
+
+        # Overview
+        overview = feature.get("overview", "")
+        if overview and len(overview) > 10:
+            scores["overview"] = 1.0
+        elif overview:
+            scores["overview"] = 0.5
+        else:
+            scores["overview"] = 0.0
+
+        # Functional requirements
+        func_reqs = feature.get("requirements_functional", [])
+        min_func = SECTION_MINIMUMS["requirements_functional"]
+        scores["requirements_functional"] = min(len(func_reqs) / max(min_func, 1), 1.0)
+
+        # Technical requirements
+        tech_reqs = feature.get("requirements_technical", [])
+        min_tech = SECTION_MINIMUMS["requirements_technical"]
+        scores["requirements_technical"] = min(len(tech_reqs) / max(min_tech, 1), 1.0)
+
+        # User stories
+        user_stories = feature.get("user_stories", [])
+        min_stories = SECTION_MINIMUMS["user_stories"]
+        scores["user_stories"] = min(len(user_stories) / max(min_stories, 1), 1.0)
+
+        # Acceptance criteria
+        acceptance = feature.get("acceptance_criteria", [])
+        min_acceptance = SECTION_MINIMUMS["acceptance_criteria"]
+        scores["acceptance_criteria"] = min(len(acceptance) / max(min_acceptance, 1), 1.0)
+
+        # Technical spec (check sub-fields)
+        tech_spec = feature.get("technical_spec", {})
+        tech_spec_filled = sum(1 for v in tech_spec.values() if v)
+        scores["technical_spec"] = min(tech_spec_filled / 4, 1.0)  # 4 sub-fields max
+
+        # Success metrics
+        metrics = feature.get("success_metrics", "")
+        if metrics and len(metrics) > 10:
+            scores["success_metrics"] = 1.0
+        elif metrics:
+            scores["success_metrics"] = 0.5
+        else:
+            scores["success_metrics"] = 0.0
+
+        return scores
+
+    def detect_gaps(self, feature_name: Optional[str] = None) -> List["GapItem"]:
+        """
+        Detect gaps in the Agent OS document.
+
+        Args:
+            feature_name: Optional specific feature to check. If None, checks all.
+
+        Returns:
+            List of GapItem objects representing missing sections.
+        """
+        gaps = []
+
+        # Get features to check
+        features_to_check = []
+        if feature_name:
+            for f in self.features:
+                if f.get("name") == feature_name:
+                    features_to_check = [f]
+                    break
+        else:
+            features_to_check = self.features if self.features else [{}]
+
+        for feature in features_to_check:
+            fname = feature.get("name", "General")
+
+            # Check Overview
+            overview = feature.get("overview", "")
+            if not overview:
+                gaps.append(GapItem(
+                    section="overview",
+                    subsection=fname,
+                    severity=GapSeverity.CRITICAL,
+                    current_count=0,
+                    minimum_required=SECTION_MINIMUMS["overview"],
+                    prompt=SECTION_FILL_PROMPTS["overview"],
+                    display_name=f"{fname}: Overview"
+                ))
+
+            # Check Functional Requirements
+            func_reqs = feature.get("requirements_functional", [])
+            min_func = SECTION_MINIMUMS["requirements_functional"]
+            if len(func_reqs) == 0:
+                gaps.append(GapItem(
+                    section="requirements_functional",
+                    subsection=fname,
+                    severity=GapSeverity.CRITICAL,
+                    current_count=0,
+                    minimum_required=min_func,
+                    prompt=SECTION_FILL_PROMPTS["requirements_functional"],
+                    display_name=f"{fname}: Functional Requirements"
+                ))
+            elif len(func_reqs) < min_func:
+                gaps.append(GapItem(
+                    section="requirements_functional",
+                    subsection=fname,
+                    severity=GapSeverity.MINOR,
+                    current_count=len(func_reqs),
+                    minimum_required=min_func,
+                    prompt=SECTION_FILL_PROMPTS["requirements_functional"],
+                    display_name=f"{fname}: Functional Requirements"
+                ))
+
+            # Check Technical Requirements
+            tech_reqs = feature.get("requirements_technical", [])
+            min_tech = SECTION_MINIMUMS["requirements_technical"]
+            if len(tech_reqs) == 0:
+                gaps.append(GapItem(
+                    section="requirements_technical",
+                    subsection=fname,
+                    severity=GapSeverity.MINOR,
+                    current_count=0,
+                    minimum_required=min_tech,
+                    prompt=SECTION_FILL_PROMPTS["requirements_technical"],
+                    display_name=f"{fname}: Technical Requirements"
+                ))
+
+            # Check User Stories
+            user_stories = feature.get("user_stories", [])
+            min_stories = SECTION_MINIMUMS["user_stories"]
+            if len(user_stories) == 0:
+                gaps.append(GapItem(
+                    section="user_stories",
+                    subsection=fname,
+                    severity=GapSeverity.CRITICAL,
+                    current_count=0,
+                    minimum_required=min_stories,
+                    prompt=SECTION_FILL_PROMPTS["user_stories"],
+                    display_name=f"{fname}: User Stories"
+                ))
+            elif len(user_stories) < min_stories:
+                gaps.append(GapItem(
+                    section="user_stories",
+                    subsection=fname,
+                    severity=GapSeverity.MINOR,
+                    current_count=len(user_stories),
+                    minimum_required=min_stories,
+                    prompt=SECTION_FILL_PROMPTS["user_stories"],
+                    display_name=f"{fname}: User Stories"
+                ))
+
+            # Check Acceptance Criteria
+            acceptance = feature.get("acceptance_criteria", [])
+            min_acceptance = SECTION_MINIMUMS["acceptance_criteria"]
+            if len(acceptance) == 0:
+                gaps.append(GapItem(
+                    section="acceptance_criteria",
+                    subsection=fname,
+                    severity=GapSeverity.CRITICAL,
+                    current_count=0,
+                    minimum_required=min_acceptance,
+                    prompt=SECTION_FILL_PROMPTS["acceptance_criteria"],
+                    display_name=f"{fname}: Acceptance Criteria"
+                ))
+            elif len(acceptance) < min_acceptance:
+                gaps.append(GapItem(
+                    section="acceptance_criteria",
+                    subsection=fname,
+                    severity=GapSeverity.MINOR,
+                    current_count=len(acceptance),
+                    minimum_required=min_acceptance,
+                    prompt=SECTION_FILL_PROMPTS["acceptance_criteria"],
+                    display_name=f"{fname}: Acceptance Criteria"
+                ))
+
+            # Check Technical Spec sub-fields
+            tech_spec = feature.get("technical_spec", {})
+            if not tech_spec.get("api_endpoints"):
+                gaps.append(GapItem(
+                    section="technical_spec",
+                    subsection=f"{fname}:api_endpoints",
+                    severity=GapSeverity.MINOR,
+                    current_count=0,
+                    minimum_required=1,
+                    prompt=SECTION_FILL_PROMPTS["technical_spec_api"],
+                    display_name=f"{fname}: API Endpoints"
+                ))
+            if not tech_spec.get("data_models"):
+                gaps.append(GapItem(
+                    section="technical_spec",
+                    subsection=f"{fname}:data_models",
+                    severity=GapSeverity.MINOR,
+                    current_count=0,
+                    minimum_required=1,
+                    prompt=SECTION_FILL_PROMPTS["technical_spec_data"],
+                    display_name=f"{fname}: Data Models"
+                ))
+
+            # Check Success Metrics
+            metrics = feature.get("success_metrics", "")
+            if not metrics:
+                gaps.append(GapItem(
+                    section="success_metrics",
+                    subsection=fname,
+                    severity=GapSeverity.MINOR,
+                    current_count=0,
+                    minimum_required=SECTION_MINIMUMS["success_metrics"],
+                    prompt=SECTION_FILL_PROMPTS["success_metrics"],
+                    display_name=f"{fname}: Success Metrics"
+                ))
+
+        return gaps
+
+    def get_section_status(self, feature_name: Optional[str] = None) -> Dict[str, str]:
+        """
+        Get status for each section (empty, partial, complete).
+
+        Used for Flash Labels display.
+
+        Args:
+            feature_name: Optional specific feature to check.
+
+        Returns:
+            Dict mapping section name to status string.
+        """
+        statuses = {}
+
+        # Get the feature to check
+        feature = {}
+        if feature_name:
+            for f in self.features:
+                if f.get("name") == feature_name:
+                    feature = f
+                    break
+        elif self.features:
+            feature = self.features[0]  # Default to first feature
+
+        # Overview
+        overview = feature.get("overview", "")
+        if overview and len(overview) > 10:
+            statuses["Overview"] = "complete"
+        elif overview:
+            statuses["Overview"] = "partial"
+        else:
+            statuses["Overview"] = "empty"
+
+        # Requirements (Functional)
+        func_reqs = feature.get("requirements_functional", [])
+        min_func = SECTION_MINIMUMS["requirements_functional"]
+        if len(func_reqs) >= min_func:
+            statuses["Requirements (Functional)"] = "complete"
+        elif func_reqs:
+            statuses["Requirements (Functional)"] = "partial"
+        else:
+            statuses["Requirements (Functional)"] = "empty"
+
+        # Requirements (Technical)
+        tech_reqs = feature.get("requirements_technical", [])
+        min_tech = SECTION_MINIMUMS["requirements_technical"]
+        if len(tech_reqs) >= min_tech:
+            statuses["Requirements (Technical)"] = "complete"
+        elif tech_reqs:
+            statuses["Requirements (Technical)"] = "partial"
+        else:
+            statuses["Requirements (Technical)"] = "empty"
+
+        # User Stories
+        user_stories = feature.get("user_stories", [])
+        min_stories = SECTION_MINIMUMS["user_stories"]
+        if len(user_stories) >= min_stories:
+            statuses["User Stories"] = "complete"
+        elif user_stories:
+            statuses["User Stories"] = "partial"
+        else:
+            statuses["User Stories"] = "empty"
+
+        # Acceptance Criteria
+        acceptance = feature.get("acceptance_criteria", [])
+        min_acceptance = SECTION_MINIMUMS["acceptance_criteria"]
+        if len(acceptance) >= min_acceptance:
+            statuses["Acceptance Criteria"] = "complete"
+        elif acceptance:
+            statuses["Acceptance Criteria"] = "partial"
+        else:
+            statuses["Acceptance Criteria"] = "empty"
+
+        # Technical Specification
+        tech_spec = feature.get("technical_spec", {})
+        tech_filled = sum(1 for v in tech_spec.values() if v)
+        if tech_filled >= 3:
+            statuses["Technical Specification"] = "complete"
+        elif tech_filled > 0:
+            statuses["Technical Specification"] = "partial"
+        else:
+            statuses["Technical Specification"] = "empty"
+
+        # Success Metrics
+        metrics = feature.get("success_metrics", "")
+        if metrics and len(metrics) > 10:
+            statuses["Success Metrics"] = "complete"
+        elif metrics:
+            statuses["Success Metrics"] = "partial"
+        else:
+            statuses["Success Metrics"] = "empty"
+
+        return statuses
+
+    def get_gap_summary(self) -> Dict[str, Any]:
+        """
+        Get a summary of gaps for display.
+
+        Returns:
+            Dict with total_gaps, critical_count, minor_count, gaps list.
+        """
+        gaps = self.detect_gaps()
+        critical = [g for g in gaps if g.severity == GapSeverity.CRITICAL]
+        minor = [g for g in gaps if g.severity == GapSeverity.MINOR]
+
+        return {
+            "total_gaps": len(gaps),
+            "critical_count": len(critical),
+            "minor_count": len(minor),
+            "gaps": gaps,
+            "critical_gaps": critical,
+            "minor_gaps": minor,
+        }
 
     def to_markdown(self) -> str:
         """Generate markdown representation of the Agent OS document."""
@@ -910,3 +1324,348 @@ def get_full_conversation_text(
         text_parts.append(f"{role}: {msg.content}")
 
     return "\n\n".join(text_parts)
+
+
+# ============================================================================
+# GAP DETECTION & FILL REQUEST FUNCTIONS
+# ============================================================================
+
+
+def detect_gaps(doc: AgentOSDocument, feature_name: Optional[str] = None) -> List[GapItem]:
+    """
+    Detect gaps in an Agent OS document.
+
+    Wrapper function for AgentOSDocument.detect_gaps().
+
+    Args:
+        doc: AgentOSDocument to analyze
+        feature_name: Optional specific feature to check
+
+    Returns:
+        List of GapItem objects
+    """
+    return doc.detect_gaps(feature_name)
+
+
+def calculate_completion_percentage(doc: AgentOSDocument) -> int:
+    """
+    Calculate completion percentage for an Agent OS document.
+
+    Wrapper function for AgentOSDocument.calculate_completion().
+
+    Args:
+        doc: AgentOSDocument to analyze
+
+    Returns:
+        Completion percentage (0-100)
+    """
+    return doc.calculate_completion()
+
+
+def get_completion_color(percentage: int) -> str:
+    """
+    Get color code based on completion percentage.
+
+    Args:
+        percentage: Completion percentage (0-100)
+
+    Returns:
+        Color string for UI display
+    """
+    if percentage < 50:
+        return "red"
+    elif percentage < 80:
+        return "orange"
+    else:
+        return "green"
+
+
+def generate_fill_prompts(
+    doc: AgentOSDocument,
+    openai_api_key: str,
+    model: str = "gpt-4-turbo-preview",
+    max_questions: int = 5
+) -> List[Dict[str, str]]:
+    """
+    Generate AI-powered questions to help fill gaps.
+
+    Args:
+        doc: AgentOSDocument to analyze
+        openai_api_key: OpenAI API key
+        model: Model to use
+        max_questions: Maximum number of questions to generate
+
+    Returns:
+        List of dicts with 'section', 'question', 'context' keys
+    """
+    gaps = doc.detect_gaps()
+
+    if not gaps:
+        return []
+
+    # Prioritize critical gaps first
+    critical_gaps = [g for g in gaps if g.severity == GapSeverity.CRITICAL]
+    minor_gaps = [g for g in gaps if g.severity == GapSeverity.MINOR]
+
+    # Select gaps to generate questions for
+    selected_gaps = (critical_gaps + minor_gaps)[:max_questions]
+
+    if not openai_api_key:
+        # Return static prompts if no API key
+        return [
+            {
+                "section": gap.display_name,
+                "question": gap.prompt,
+                "context": f"This section is {gap.severity.value}. Currently has {gap.current_count}/{gap.minimum_required} items."
+            }
+            for gap in selected_gaps
+        ]
+
+    # Generate AI-powered questions
+    try:
+        client = OpenAI(api_key=openai_api_key)
+
+        # Build context from existing document
+        existing_context = []
+        if doc.vision:
+            existing_context.append(f"Vision: {doc.vision}")
+        if doc.features:
+            for f in doc.features:
+                if f.get("overview"):
+                    existing_context.append(f"Feature '{f.get('name')}': {f.get('overview')}")
+
+        context_str = "\n".join(existing_context) if existing_context else "No existing context available."
+
+        gap_descriptions = "\n".join([
+            f"- {gap.display_name}: {gap.prompt}"
+            for gap in selected_gaps
+        ])
+
+        prompt = f"""Based on this project context:
+{context_str}
+
+The following gaps need to be filled:
+{gap_descriptions}
+
+Generate {len(selected_gaps)} specific, actionable questions that would help gather the missing information.
+Each question should be conversational and easy to answer verbally.
+
+Return as JSON array:
+[
+  {{"section": "section name", "question": "the question", "context": "why this matters"}}
+]
+
+Return ONLY valid JSON, no other text."""
+
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": "You are a helpful product manager asking clarifying questions. Return only JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=1500
+        )
+
+        response_text = response.choices[0].message.content.strip()
+
+        # Parse JSON
+        if response_text.startswith("```"):
+            response_text = response_text.split("```")[1]
+            if response_text.startswith("json"):
+                response_text = response_text[4:]
+            response_text = response_text.strip()
+
+        questions = json.loads(response_text)
+
+        ProcessLog.success(
+            "AgentOS",
+            f"Generated {len(questions)} fill prompts for gaps",
+            details={"gap_count": len(selected_gaps)}
+        )
+
+        return questions
+
+    except Exception as e:
+        ProcessLog.warning("AgentOS", f"Failed to generate AI fill prompts: {e}")
+        # Fall back to static prompts
+        return [
+            {
+                "section": gap.display_name,
+                "question": gap.prompt,
+                "context": f"This section is {gap.severity.value}. Currently has {gap.current_count}/{gap.minimum_required} items."
+            }
+            for gap in selected_gaps
+        ]
+
+
+def process_fill_response(
+    doc: AgentOSDocument,
+    section: str,
+    response_text: str,
+    openai_api_key: str,
+    model: str = "gpt-4-turbo-preview"
+) -> AgentOSDocument:
+    """
+    Process a user's response to a fill prompt and update the document.
+
+    Args:
+        doc: AgentOSDocument to update
+        section: Section being filled
+        response_text: User's response text
+        openai_api_key: OpenAI API key
+        model: Model to use
+
+    Returns:
+        Updated AgentOSDocument
+    """
+    if not response_text.strip():
+        return doc
+
+    # Classify the response and add to appropriate section
+    items, _ = classify_text(response_text, openai_api_key, model)
+
+    if not items:
+        # If classification failed, try to add directly based on section hint
+        ProcessLog.warning("AgentOS", "Classification returned no items, adding response directly")
+
+        # Parse section name to determine where to add
+        section_lower = section.lower()
+
+        if doc.features:
+            feature = doc.features[0]  # Default to first feature
+        else:
+            # Create a new feature
+            doc.features.append({
+                "name": "General",
+                "overview": "",
+                "requirements_functional": [],
+                "requirements_technical": [],
+                "user_stories": [],
+                "acceptance_criteria": [],
+                "technical_spec": {},
+                "success_metrics": ""
+            })
+            feature = doc.features[0]
+
+        if "overview" in section_lower:
+            feature["overview"] = response_text.strip()
+        elif "functional" in section_lower:
+            feature["requirements_functional"].append(response_text.strip())
+        elif "technical req" in section_lower:
+            feature["requirements_technical"].append(response_text.strip())
+        elif "user stor" in section_lower:
+            feature["user_stories"].append(response_text.strip())
+        elif "acceptance" in section_lower:
+            feature["acceptance_criteria"].append(response_text.strip())
+        elif "api" in section_lower:
+            feature["technical_spec"]["api_endpoints"] = response_text.strip()
+        elif "data model" in section_lower:
+            feature["technical_spec"]["data_models"] = response_text.strip()
+        elif "metric" in section_lower:
+            feature["success_metrics"] = response_text.strip()
+
+    else:
+        # Merge classified items into the document
+        doc = _merge_items_into_document(doc, items)
+
+    doc.calculate_completion()
+    return doc
+
+
+def _merge_items_into_document(doc: AgentOSDocument, items: List[ClassifiedItem]) -> AgentOSDocument:
+    """
+    Merge new classified items into an existing document.
+
+    Args:
+        doc: Existing AgentOSDocument
+        items: New classified items to merge
+
+    Returns:
+        Updated AgentOSDocument
+    """
+    # Ensure at least one feature exists
+    if not doc.features:
+        doc.features.append({
+            "name": "General",
+            "overview": "",
+            "requirements_functional": [],
+            "requirements_technical": [],
+            "user_stories": [],
+            "acceptance_criteria": [],
+            "technical_spec": {},
+            "success_metrics": ""
+        })
+
+    current_feature = doc.features[0]  # Default to first feature
+
+    for item in items:
+        if item.section == AgentOSSection.STANDARDS:
+            if item.subsection == AgentOSSubsection.TECH_STACK:
+                if item.text not in doc.tech_stack:
+                    doc.tech_stack.append(item.text)
+            elif item.subsection == AgentOSSubsection.ARCHITECTURE:
+                if item.text not in doc.architecture:
+                    doc.architecture.append(item.text)
+            elif item.subsection == AgentOSSubsection.CODING_PATTERNS:
+                if item.text not in doc.coding_patterns:
+                    doc.coding_patterns.append(item.text)
+
+        elif item.section == AgentOSSection.PRODUCT:
+            if item.subsection == AgentOSSubsection.VISION:
+                if not doc.vision:
+                    doc.vision = item.text
+                elif item.text not in doc.vision:
+                    doc.vision = f"{doc.vision}\n{item.text}"
+            elif item.subsection == AgentOSSubsection.TARGET_USERS:
+                if item.text not in doc.target_users:
+                    doc.target_users.append(item.text)
+            elif item.subsection == AgentOSSubsection.USE_CASES:
+                if item.text not in doc.use_cases:
+                    doc.use_cases.append(item.text)
+
+        elif item.section == AgentOSSection.SPECS:
+            subsection_str = item.subsection.value if hasattr(item.subsection, 'value') else str(item.subsection)
+
+            if subsection_str == "overview":
+                if not current_feature.get("overview"):
+                    current_feature["overview"] = item.text
+            elif subsection_str == "requirements_functional":
+                if item.text not in current_feature.get("requirements_functional", []):
+                    current_feature.setdefault("requirements_functional", []).append(item.text)
+            elif subsection_str == "requirements_technical":
+                if item.text not in current_feature.get("requirements_technical", []):
+                    current_feature.setdefault("requirements_technical", []).append(item.text)
+            elif subsection_str == "user_stories":
+                if item.text not in current_feature.get("user_stories", []):
+                    current_feature.setdefault("user_stories", []).append(item.text)
+            elif subsection_str == "acceptance_criteria":
+                if item.text not in current_feature.get("acceptance_criteria", []):
+                    current_feature.setdefault("acceptance_criteria", []).append(item.text)
+            elif subsection_str == "success_metrics":
+                if not current_feature.get("success_metrics"):
+                    current_feature["success_metrics"] = item.text
+
+        elif item.section == AgentOSSection.GAPS:
+            if item.text not in doc.questions:
+                doc.questions.append(item.text)
+
+    return doc
+
+
+def get_flash_label_sections() -> List[str]:
+    """
+    Get list of sections for Flash Labels display.
+
+    Returns:
+        List of section names for Flash Labels
+    """
+    return [
+        "Overview",
+        "Requirements (Functional)",
+        "Requirements (Technical)",
+        "User Stories",
+        "Acceptance Criteria",
+        "Technical Specification",
+        "Success Metrics"
+    ]

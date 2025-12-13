@@ -95,6 +95,143 @@ def show_info(message: str) -> None:
     st.info(f"ℹ️ {message}")
 
 
+# ============================================================================
+# AGENT OS FLASH LABELS (Phase 2A)
+# ============================================================================
+
+
+def render_compact_flash_labels() -> None:
+    """
+    Render a compact Flash Labels bar for visibility during chat.
+
+    This shows the current Agent OS section completion status
+    in a non-intrusive bar format.
+    """
+    from app.services.agent_os_service import (
+        AgentOSDocument,
+        create_empty_template,
+    )
+
+    # Get document from session state
+    doc = None
+    if "agent_os_doc" in st.session_state:
+        doc = st.session_state.agent_os_doc
+    else:
+        return  # No document yet, nothing to show
+
+    # Get section statuses
+    statuses = doc.get_section_status()
+
+    # Count statuses
+    empty_count = sum(1 for s in statuses.values() if s == "empty")
+    partial_count = sum(1 for s in statuses.values() if s == "partial")
+    complete_count = sum(1 for s in statuses.values() if s == "complete")
+    total = len(statuses)
+
+    # Calculate completion percentage
+    percentage = doc.calculate_completion()
+
+    # Determine overall color
+    if percentage < 50:
+        bar_color = "#ef4444"
+        bg_color = "#fef2f2"
+    elif percentage < 80:
+        bar_color = "#f59e0b"
+        bg_color = "#fffbeb"
+    else:
+        bar_color = "#10b981"
+        bg_color = "#d1fae5"
+
+    # Build compact flash labels bar
+    st.markdown(f"""
+    <div style="
+        background: {bg_color};
+        border: 1px solid {bar_color};
+        border-radius: 8px;
+        padding: 8px 12px;
+        margin: 8px 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+    ">
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-weight: 600; color: {bar_color};">Agent OS: {percentage}%</span>
+            <span style="font-size: 12px; color: #666;">
+                {complete_count}/{total} sections complete
+            </span>
+        </div>
+        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+            <span style="
+                background: #26de81;
+                color: white;
+                padding: 2px 8px;
+                border-radius: 10px;
+                font-size: 11px;
+            ">[x] {complete_count}</span>
+            <span style="
+                background: #ffa502;
+                color: white;
+                padding: 2px 8px;
+                border-radius: 10px;
+                font-size: 11px;
+            ">[~] {partial_count}</span>
+            <span style="
+                background: #ff6b6b;
+                color: white;
+                padding: 2px 8px;
+                border-radius: 10px;
+                font-size: 11px;
+            ">[ ] {empty_count}</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def render_mini_gap_indicator() -> None:
+    """
+    Render a minimal gap indicator for non-intrusive display.
+
+    Shows just the percentage and gap count in a small badge.
+    """
+    from app.services.agent_os_service import AgentOSDocument
+
+    doc = st.session_state.get("agent_os_doc")
+    if not doc:
+        return
+
+    percentage = doc.calculate_completion()
+    gap_summary = doc.get_gap_summary()
+
+    # Determine color
+    if percentage < 50:
+        color = "#dc2626"
+    elif percentage < 80:
+        color = "#d97706"
+    else:
+        color = "#059669"
+
+    # Just show a small indicator
+    if gap_summary['total_gaps'] > 0:
+        st.markdown(f"""
+        <div style="
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            padding: 4px 8px;
+            font-size: 12px;
+        ">
+            <span style="color: {color}; font-weight: 600;">{percentage}%</span>
+            <span style="color: #666;">|</span>
+            <span style="color: #888;">{gap_summary['total_gaps']} gaps</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+
 # Project Selection Components
 
 def render_user_selector(db: Session, users: List[UserProfile]) -> Optional[UserProfile]:
@@ -752,38 +889,47 @@ def render_chat_panel(
         st.markdown(f"**Session:** {chat_session.title}")
     with col3:
         # New session button
-        if st.button("🆕 New", help="Start a new clean session (no baton)", use_container_width=True):
-            try:
-                from datetime import datetime
-                from app.core.models import ChatSession, SessionStatus
+        new_session_clicked = st.button("🆕 New", help="Start a new clean session (no baton)", use_container_width=True)
 
-                # Create new clean session
-                new_session = ChatSession(
-                    user_id=user_id,
-                    project_id=project.id,
-                    title=f"Session - {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-                    description="Clean session without baton",
-                    session_type="general",
-                    is_active=True,
-                    status=SessionStatus.ACTIVE,
-                    total_prompt_tokens=0,
-                    total_completion_tokens=0,
-                    total_tokens_used=0
-                )
-                db.add(new_session)
+    # =========================================================================
+    # AGENT OS FLASH LABELS - Visible during chat (Phase 2A)
+    # =========================================================================
+    # Show compact flash labels if Agent OS doc exists
+    if "agent_os_doc" in st.session_state:
+        render_compact_flash_labels()
 
-                # Deactivate old session
-                chat_session.is_active = False
+    if new_session_clicked:
+        try:
+            from datetime import datetime
+            from app.core.models import ChatSession, SessionStatus
 
-                db.commit()
-                db.refresh(new_session)
+            # Create new clean session
+            new_session = ChatSession(
+                user_id=user_id,
+                project_id=project.id,
+                title=f"Session - {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                description="Clean session without baton",
+                session_type="general",
+                is_active=True,
+                status=SessionStatus.ACTIVE,
+                total_prompt_tokens=0,
+                total_completion_tokens=0,
+                total_tokens_used=0
+            )
+            db.add(new_session)
 
-                # Update session state
-                st.session_state.current_chat_session_id = new_session.id
-                show_success("New clean session started!")
-                st.rerun()
-            except Exception as e:
-                show_error(f"Failed to create new session: {str(e)}")
+            # Deactivate old session
+            chat_session.is_active = False
+
+            db.commit()
+            db.refresh(new_session)
+
+            # Update session state
+            st.session_state.current_chat_session_id = new_session.id
+            show_success("New clean session started!")
+            st.rerun()
+        except Exception as e:
+            show_error(f"Failed to create new session: {str(e)}")
 
     st.divider()
 

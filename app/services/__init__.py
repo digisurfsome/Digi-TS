@@ -92,6 +92,11 @@ from app.services.agent_os_service import (
     AgentOSSection,
     AgentOSSubsection,
     ClassifiedItem,
+    GapItem,
+    GapSeverity,
+    SECTION_WEIGHTS,
+    SECTION_MINIMUMS,
+    SECTION_FILL_PROMPTS,
     classify_text,
     generate_agent_os_from_rant,
     create_empty_template,
@@ -103,6 +108,13 @@ from app.services.agent_os_service import (
     get_raw_rants,
     get_raw_rant_by_id,
     get_full_conversation_text,
+    # Gap detection functions (Phase 2A)
+    detect_gaps,
+    calculate_completion_percentage,
+    get_completion_color,
+    generate_fill_prompts,
+    process_fill_response,
+    get_flash_label_sections,
 )
 
 __all__ = [
@@ -178,6 +190,11 @@ __all__ = [
     "AgentOSSection",
     "AgentOSSubsection",
     "ClassifiedItem",
+    "GapItem",
+    "GapSeverity",
+    "SECTION_WEIGHTS",
+    "SECTION_MINIMUMS",
+    "SECTION_FILL_PROMPTS",
     "classify_text",
     "generate_agent_os_from_rant",
     "create_empty_template",
@@ -189,4 +206,11 @@ __all__ = [
     "get_raw_rants",
     "get_raw_rant_by_id",
     "get_full_conversation_text",
+    # Gap detection functions (Phase 2A)
+    "detect_gaps",
+    "calculate_completion_percentage",
+    "get_completion_color",
+    "generate_fill_prompts",
+    "process_fill_response",
+    "get_flash_label_sections",
 ]
