@@ -207,8 +207,10 @@ def update_activity(
     if session_state is not None:
         activity.session_state = session_state
 
-    db.commit()
-    db.refresh(activity)
+    # Skip DB operations if this is a mock activity (table doesn't exist)
+    if activity.id != 0:
+        db.commit()
+        db.refresh(activity)
     return activity
 
 
@@ -226,8 +228,10 @@ def record_activity_ping(db: Session, user_id: int, project_id: int) -> SessionA
     """
     activity = get_or_create_activity(db, user_id, project_id)
     activity.last_active = datetime.utcnow()
-    db.commit()
-    db.refresh(activity)
+    # Skip DB operations if this is a mock activity (table doesn't exist)
+    if activity.id != 0:
+        db.commit()
+        db.refresh(activity)
     return activity
 
 
@@ -255,8 +259,10 @@ def start_new_session(db: Session, user_id: int, project_id: int) -> SessionActi
             activity.warmup_completed = False
             activity.warmup_completed_at = None
 
-    db.commit()
-    db.refresh(activity)
+    # Skip DB operations if this is a mock activity (table doesn't exist)
+    if activity.id != 0:
+        db.commit()
+        db.refresh(activity)
     return activity
 
 
@@ -277,8 +283,10 @@ def complete_warmup(db: Session, user_id: int, project_id: int) -> SessionActivi
     activity.warmup_completed = True
     activity.warmup_completed_at = datetime.utcnow()
 
-    db.commit()
-    db.refresh(activity)
+    # Skip DB operations if this is a mock activity (table doesn't exist)
+    if activity.id != 0:
+        db.commit()
+        db.refresh(activity)
     return activity
 
 
