@@ -119,6 +119,8 @@ def list_ideas(
         # Order by rating (desc), then times_shown (asc for less-shown ideas)
         return query.order_by(desc(Idea.rating), Idea.times_shown).all()
     except Exception as e:
+        # Rollback failed transaction to prevent subsequent queries from failing
+        db.rollback()
         # If table doesn't exist yet, return empty list
         if "ideas" in str(e).lower() or "undefined" in str(e).lower():
             return []
@@ -291,6 +293,8 @@ def get_warmup_ideas(
 
         return ideas
     except Exception as e:
+        # Rollback failed transaction to prevent subsequent queries from failing
+        db.rollback()
         # If table doesn't exist yet, return empty list
         if "ideas" in str(e).lower() or "undefined" in str(e).lower():
             return []
@@ -393,6 +397,8 @@ def get_idea_stats(db: Session, project_id: int, user_id: int) -> Dict[str, Any]
             "total_times_shown": int(total_shown),
         }
     except Exception as e:
+        # Rollback failed transaction to prevent subsequent queries from failing
+        db.rollback()
         # If table doesn't exist yet, return empty stats
         if "ideas" in str(e).lower() or "undefined" in str(e).lower():
             return {
