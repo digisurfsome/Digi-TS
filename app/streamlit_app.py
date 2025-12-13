@@ -33,10 +33,14 @@ from app.ui.layout import (
     render_project_context_ui,
     render_chat_panel,
     render_truth_doc_export_ui,
+    render_cockpit_mode_toggle,
+    render_cockpit_dashboard,
+    is_cockpit_mode_active,
 )
 from app.ui.node_tree_panel import render_design_tree_panel
 from app.ui.roundtable_panel import render_roundtable_panel
 from app.ui.agent_os_panel import render_agent_os_panel
+from app.ui.lab_panel import render_lab_panel, render_lab_mode_indicator
 from app.services import (
     get_or_create_default_user,
     list_all_users,
@@ -464,84 +468,120 @@ def main():
 
     # Right column: Tabs
     with main_col:
-        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(
-            ["🏠 System Status", "⚙️ Settings", "📋 Project Context", "🎨 Design Tree", "🤖 Agent OS", "📄 Truth Doc", "📊 Process Log", "🔄 Roundtable"]
-        )
+        # Check for Cockpit Mode
+        cockpit_active = is_cockpit_mode_active()
 
-        with tab1:
-            render_system_status()
+        # Show mode toggle at top
+        mode_col1, mode_col2 = st.columns([3, 1])
+        with mode_col2:
+            render_cockpit_mode_toggle()
+        with mode_col1:
+            render_lab_mode_indicator()
 
-        with tab2:
-            if "current_user" in locals() and current_user:
-                with get_db() as db:
-                    render_settings_ui(db, user_id=None)  # Global settings for now
-            else:
-                st.info("Select a user to configure settings.")
-
-        with tab3:
-            if st.session_state.get("current_project_id"):
-                with get_db() as db:
-                    from app.services import get_project_by_id
-
-                    project = get_project_by_id(db, st.session_state.current_project_id)
-                    if project:
-                        render_project_context_ui(db, project)
-                    else:
-                        show_error("⚠️ Selected project not found. Please select a project from the sidebar.")
-            else:
-                st.info("📁 **No Project Selected**\n\nPlease select or create a project in the left sidebar to manage project context.")
-
-        with tab4:
-            if st.session_state.get("current_project_id"):
-                with get_db() as db:
-                    from app.services import get_project_by_id
-
-                    project = get_project_by_id(db, st.session_state.current_project_id)
-                    if project:
-                        render_design_tree_panel(db, project)
-                    else:
-                        show_error("⚠️ Selected project not found. Please select a project from the sidebar.")
-            else:
-                st.info("📁 **No Project Selected**\n\nPlease select or create a project in the left sidebar to manage design tree nodes.")
-
-        with tab5:
-            # Agent OS - Transform rants into structured specs
-            if st.session_state.get("current_project_id"):
-                with get_db() as db:
-                    from app.services import get_project_by_id
-
-                    project = get_project_by_id(db, st.session_state.current_project_id)
-                    if project:
-                        # Get current chat session ID if available
-                        session_id = st.session_state.get("current_chat_session_id")
-                        render_agent_os_panel(db, project, session_id)
-                    else:
-                        show_error("⚠️ Selected project not found. Please select a project from the sidebar.")
-            else:
-                st.info("📁 **No Project Selected**\n\nPlease select or create a project in the left sidebar to use Agent OS.")
-
-        with tab6:
-            if st.session_state.get("current_project_id"):
-                with get_db() as db:
-                    from app.services import get_project_by_id
-
-                    project = get_project_by_id(db, st.session_state.current_project_id)
-                    if project:
-                        render_truth_doc_export_ui(db, project)
-                    else:
-                        show_error("⚠️ Selected project not found. Please select a project from the sidebar.")
-            else:
-                st.info("📁 **No Project Selected**\n\nPlease select or create a project in the left sidebar to export Truth Doc.")
-
-        with tab7:
-            from app.services import render_process_log
-            render_process_log()
-
-        with tab8:
-            # Roundtable Coder - works with or without a project
+        # If Cockpit Mode is active, show the dashboard instead of tabs
+        if cockpit_active and st.session_state.get("current_project_id"):
             with get_db() as db:
-                project_id = st.session_state.get("current_project_id")
-                render_roundtable_panel(db, project_id=project_id)
+                from app.services import get_project_by_id
+                project = get_project_by_id(db, st.session_state.current_project_id)
+                if project:
+                    session_id = st.session_state.get("current_chat_session_id")
+                    render_cockpit_dashboard(db, project, session_id)
+                else:
+                    show_error("Project not found")
+        else:
+            # Standard tabs mode
+            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs(
+                ["🏠 System Status", "⚙️ Settings", "📋 Project Context", "🎨 Design Tree", "🤖 Agent OS", "🧪 Lab Mode", "📄 Truth Doc", "📊 Process Log", "🔄 Roundtable"]
+            )
+
+            with tab1:
+                render_system_status()
+
+            with tab2:
+                if "current_user" in locals() and current_user:
+                    with get_db() as db:
+                        render_settings_ui(db, user_id=None)  # Global settings for now
+                else:
+                    st.info("Select a user to configure settings.")
+
+            with tab3:
+                if st.session_state.get("current_project_id"):
+                    with get_db() as db:
+                        from app.services import get_project_by_id
+
+                        project = get_project_by_id(db, st.session_state.current_project_id)
+                        if project:
+                            render_project_context_ui(db, project)
+                        else:
+                            show_error("⚠️ Selected project not found. Please select a project from the sidebar.")
+                else:
+                    st.info("📁 **No Project Selected**\n\nPlease select or create a project in the left sidebar to manage project context.")
+
+            with tab4:
+                if st.session_state.get("current_project_id"):
+                    with get_db() as db:
+                        from app.services import get_project_by_id
+
+                        project = get_project_by_id(db, st.session_state.current_project_id)
+                        if project:
+                            render_design_tree_panel(db, project)
+                        else:
+                            show_error("⚠️ Selected project not found. Please select a project from the sidebar.")
+                else:
+                    st.info("📁 **No Project Selected**\n\nPlease select or create a project in the left sidebar to manage design tree nodes.")
+
+            with tab5:
+                # Agent OS - Transform rants into structured specs
+                if st.session_state.get("current_project_id"):
+                    with get_db() as db:
+                        from app.services import get_project_by_id
+
+                        project = get_project_by_id(db, st.session_state.current_project_id)
+                        if project:
+                            # Get current chat session ID if available
+                            session_id = st.session_state.get("current_chat_session_id")
+                            render_agent_os_panel(db, project, session_id)
+                        else:
+                            show_error("⚠️ Selected project not found. Please select a project from the sidebar.")
+                else:
+                    st.info("📁 **No Project Selected**\n\nPlease select or create a project in the left sidebar to use Agent OS.")
+
+            with tab6:
+                # Lab Mode - Test different feature combinations
+                if st.session_state.get("current_project_id"):
+                    with get_db() as db:
+                        from app.services import get_project_by_id
+
+                        project = get_project_by_id(db, st.session_state.current_project_id)
+                        if project:
+                            render_lab_panel(db, project)
+                        else:
+                            show_error("⚠️ Selected project not found. Please select a project from the sidebar.")
+                else:
+                    st.info("📁 **No Project Selected**\n\nPlease select or create a project in the left sidebar to use Lab Mode.")
+
+            with tab7:
+                if st.session_state.get("current_project_id"):
+                    with get_db() as db:
+                        from app.services import get_project_by_id
+
+                        project = get_project_by_id(db, st.session_state.current_project_id)
+                        if project:
+                            render_truth_doc_export_ui(db, project)
+                        else:
+                            show_error("⚠️ Selected project not found. Please select a project from the sidebar.")
+                else:
+                    st.info("📁 **No Project Selected**\n\nPlease select or create a project in the left sidebar to export Truth Doc.")
+
+            with tab8:
+                from app.services import render_process_log
+                render_process_log()
+
+            with tab9:
+                # Roundtable Coder - works with or without a project
+                with get_db() as db:
+                    project_id = st.session_state.get("current_project_id")
+                    render_roundtable_panel(db, project_id=project_id)
 
     # Render footer
     render_footer()

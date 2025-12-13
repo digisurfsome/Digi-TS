@@ -4,13 +4,16 @@ Agent OS Panel UI Components.
 Provides UI for viewing, generating, and exporting Agent OS documents.
 Includes live tree view of Agent OS structure and consolidation features.
 Phase 2B: Adds Click-to-Rant and Real-Time Tagging voice input features.
+Phase 3: Adds Tag Overlay, Multi-Panel Live Fill, and Click-to-Expand features.
+Phase 4: Adds Cockpit Mode and Lab Mode integration.
 """
 
 import streamlit as st
 from sqlalchemy.orm import Session
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime
 import time
+import re
 
 from app.core.models import Project, ChatMessage
 from app.services import (
@@ -62,6 +65,12 @@ from app.services.voice_service import (
     format_duration,
 )
 from app.ui.layout import show_success, show_error, show_warning, show_info
+from app.services.lab_service import (
+    LabService,
+    FeatureFlag,
+    get_section_color,
+    get_section_layer,
+)
 
 
 def render_agent_os_tree(doc: AgentOSDocument) -> None:
@@ -366,6 +375,660 @@ def render_flash_labels(doc: AgentOSDocument, feature_name: Optional[str] = None
     '''
 
     st.markdown(css + labels_html, unsafe_allow_html=True)
+
+
+# ============================================================================
+# TAG OVERLAY TOGGLE (Phase 3 - Mechanism 12)
+# ============================================================================
+
+
+def render_tag_overlay_view(
+    doc: AgentOSDocument,
+    raw_text: str,
+    tagged_segments: Optional[List[Dict]] = None
+) -> None:
+    """
+    Render raw rant with tag overlay toggle.
+
+    Shows tags overlaid on raw rant text. See connections without losing original.
+
+    Args:
+        doc: AgentOSDocument for section info
+        raw_text: The raw unmodified rant text
+        tagged_segments: Optional list of tagged segments with positions
+    """
+    st.markdown("#### Raw Rant with Tag Overlay")
+
+    # Toggle for showing/hiding tags
+    show_tags = st.toggle(
+        "Show Tag Overlay",
+        value=False,
+        key="tag_overlay_toggle",
+        help="Toggle to show/hide section tags overlaid on the raw text"
+    )
+
+    if not raw_text:
+        st.caption("*(No raw text available)*")
+        return
+
+    if not show_tags:
+        # Default view: Clean raw text
+        st.text_area(
+            "Raw Rant",
+            value=raw_text,
+            height=300,
+            disabled=True,
+            label_visibility="collapsed"
+        )
+    else:
+        # Tagged view: Show tags inline
+        if tagged_segments:
+            # Build annotated text from tagged segments
+            annotated_html = _build_annotated_html(raw_text, tagged_segments)
+            st.markdown(annotated_html, unsafe_allow_html=True)
+
+            # Legend
+            _render_tag_legend()
+        else:
+            # Try to infer tags from the document
+            inferred_segments = _infer_tags_from_document(raw_text, doc)
+            if inferred_segments:
+                annotated_html = _build_annotated_html(raw_text, inferred_segments)
+                st.markdown(annotated_html, unsafe_allow_html=True)
+                _render_tag_legend()
+            else:
+                st.info("No tagged segments available. Use Real-Time Tagging to create tagged content.")
+                st.text_area(
+                    "Raw Rant",
+                    value=raw_text,
+                    height=300,
+                    disabled=True,
+                    label_visibility="collapsed"
+                )
+
+
+def _build_annotated_html(raw_text: str, segments: List[Dict]) -> str:
+    """
+    Build HTML with annotated tags from segments.
+
+    Args:
+        raw_text: Original text
+        segments: List of {section, text, start_time, end_time}
+
+    Returns:
+        HTML string with tagged spans
+    """
+    # Sort segments by position in text (approximate by text matching)
+    html_parts = ['<div style="background: #1a1a2e; padding: 16px; border-radius: 8px; font-family: monospace; line-height: 1.8;">']
+
+    remaining_text = raw_text
+    for segment in segments:
+        section = segment.get("section", "Unknown")
+        segment_text = segment.get("text", "")
+        section_key = VOICE_SECTION_MAP.get(section, section.lower().replace(" ", "_"))
+        color = get_section_color(section_key)
+        layer = get_section_layer(section_key)
+
+        if segment_text and segment_text in remaining_text:
+            # Find the segment in remaining text
+            idx = remaining_text.find(segment_text)
+            if idx > 0:
+                # Add text before segment
+                html_parts.append(f'<span style="color: #e0e0e0;">{remaining_text[:idx]}</span>')
+
+            # Add tagged segment with tooltip
+            tooltip = f"{layer} > {section}"
+            html_parts.append(f'''
+                <span style="
+                    background: {color}22;
+                    border-bottom: 2px solid {color};
+                    padding: 2px 4px;
+                    border-radius: 4px;
+                    position: relative;
+                    cursor: pointer;
+                " title="{tooltip}">
+                    <span style="color: #ffffff;">{segment_text}</span>
+                    <sup style="
+                        background: {color};
+                        color: white;
+                        font-size: 10px;
+                        padding: 1px 4px;
+                        border-radius: 3px;
+                        margin-left: 2px;
+                    ">{section}</sup>
+                </span>
+            ''')
+
+            remaining_text = remaining_text[idx + len(segment_text):]
+
+    # Add any remaining text
+    if remaining_text:
+        html_parts.append(f'<span style="color: #e0e0e0;">{remaining_text}</span>')
+
+    html_parts.append('</div>')
+
+    return ''.join(html_parts)
+
+
+def _infer_tags_from_document(raw_text: str, doc: AgentOSDocument) -> List[Dict]:
+    """
+    Try to infer tag positions by matching document content to raw text.
+
+    Args:
+        raw_text: Original text
+        doc: AgentOSDocument with classified content
+
+    Returns:
+        List of inferred segments
+    """
+    segments = []
+
+    # Extract content from document and try to find in raw text
+    if doc.features:
+        feature = doc.features[0]
+
+        # Check each section
+        sections_to_check = [
+            ("Overview", feature.get("overview", "")),
+            ("Requirements (Functional)", feature.get("requirements_functional", [])),
+            ("Requirements (Technical)", feature.get("requirements_technical", [])),
+            ("User Stories", feature.get("user_stories", [])),
+            ("Acceptance Criteria", feature.get("acceptance_criteria", [])),
+            ("Success Metrics", feature.get("success_metrics", "")),
+        ]
+
+        for section_name, content in sections_to_check:
+            if isinstance(content, str) and content:
+                # Check if content appears in raw text
+                if content[:50] in raw_text or content in raw_text:
+                    segments.append({
+                        "section": section_name,
+                        "text": content[:200] if len(content) > 200 else content,
+                    })
+            elif isinstance(content, list):
+                for item in content[:3]:  # Limit to first 3 items
+                    if item and item in raw_text:
+                        segments.append({
+                            "section": section_name,
+                            "text": item,
+                        })
+
+    return segments
+
+
+def _render_tag_legend() -> None:
+    """Render the color legend for tag overlay."""
+    st.markdown("---")
+    st.markdown("**Tag Legend:**")
+
+    legend_cols = st.columns(4)
+
+    legend_items = [
+        ("Standards", "#3b82f6"),
+        ("Product", "#8b5cf6"),
+        ("Specs (Req)", "#10b981"),
+        ("Specs (Stories)", "#f97316"),
+        ("Specs (Technical)", "#ef4444"),
+        ("Gaps", "#eab308"),
+    ]
+
+    for idx, (name, color) in enumerate(legend_items):
+        col_idx = idx % 4
+        with legend_cols[col_idx]:
+            st.markdown(f'''
+                <span style="
+                    display: inline-block;
+                    width: 12px;
+                    height: 12px;
+                    background: {color};
+                    border-radius: 2px;
+                    margin-right: 4px;
+                "></span>
+                <span style="font-size: 12px;">{name}</span>
+            ''', unsafe_allow_html=True)
+
+
+# ============================================================================
+# MULTI-PANEL LIVE FILL VIEW (Phase 3 - Mechanism 13)
+# ============================================================================
+
+
+def render_multi_panel_live_fill(
+    doc: AgentOSDocument,
+    highlight_section: Optional[str] = None
+) -> Optional[str]:
+    """
+    Render multiple Agent OS sections as a grid of mini panels.
+
+    Watch multiple sections being filled simultaneously.
+
+    Args:
+        doc: AgentOSDocument to display
+        highlight_section: Optional section to highlight (recently updated)
+
+    Returns:
+        Clicked section name if any panel was clicked
+    """
+    st.markdown("#### Multi-Panel View")
+    st.caption("Watch all sections fill in real-time. Click any panel to expand.")
+
+    clicked_section = None
+
+    # Define panel sections
+    panels = [
+        ("overview", "Overview", "overview"),
+        ("requirements_functional", "Requirements (Functional)", "requirements_functional"),
+        ("requirements_technical", "Requirements (Technical)", "requirements_technical"),
+        ("user_stories", "User Stories", "user_stories"),
+        ("acceptance_criteria", "Acceptance Criteria", "acceptance_criteria"),
+        ("technical_spec", "Technical Spec", "technical_spec"),
+        ("success_metrics", "Success Metrics", "success_metrics"),
+        ("questions", "Questions/Gaps", "questions"),
+    ]
+
+    # Create 2 rows of 4 panels
+    row1_panels = panels[:4]
+    row2_panels = panels[4:]
+
+    # Row 1
+    cols1 = st.columns(4)
+    for idx, (key, label, section_key) in enumerate(row1_panels):
+        with cols1[idx]:
+            clicked = _render_mini_panel(
+                doc, key, label, section_key,
+                is_highlighted=(highlight_section == section_key)
+            )
+            if clicked:
+                clicked_section = section_key
+
+    # Row 2
+    cols2 = st.columns(4)
+    for idx, (key, label, section_key) in enumerate(row2_panels):
+        with cols2[idx]:
+            clicked = _render_mini_panel(
+                doc, key, label, section_key,
+                is_highlighted=(highlight_section == section_key)
+            )
+            if clicked:
+                clicked_section = section_key
+
+    return clicked_section
+
+
+def _render_mini_panel(
+    doc: AgentOSDocument,
+    key: str,
+    label: str,
+    section_key: str,
+    is_highlighted: bool = False
+) -> bool:
+    """
+    Render a single mini panel for a section.
+
+    Args:
+        doc: AgentOSDocument
+        key: Internal key
+        label: Display label
+        section_key: Section key for color
+        is_highlighted: Whether to highlight this panel
+
+    Returns:
+        True if panel was clicked
+    """
+    color = get_section_color(section_key)
+    content = _get_section_content(doc, key)
+    preview = _get_content_preview(content)
+    status = _get_section_status_indicator(content)
+
+    # Highlight effect
+    border_style = f"3px solid {color}" if is_highlighted else f"1px solid #374151"
+    animation = "animation: pulse 0.5s ease-in-out;" if is_highlighted else ""
+
+    # Panel container
+    panel_html = f'''
+    <div style="
+        background: #1f2937;
+        border: {border_style};
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 8px;
+        min-height: 120px;
+        {animation}
+    ">
+        <div style="
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        ">
+            <span style="
+                font-size: 11px;
+                font-weight: 600;
+                color: {color};
+                text-transform: uppercase;
+            ">{label}</span>
+            <span style="font-size: 10px;">{status}</span>
+        </div>
+        <div style="
+            font-size: 12px;
+            color: #9ca3af;
+            line-height: 1.4;
+            overflow: hidden;
+            max-height: 60px;
+        ">{preview}</div>
+    </div>
+    '''
+
+    st.markdown(panel_html, unsafe_allow_html=True)
+
+    # Click handler using button
+    return st.button(
+        f"Expand {label}",
+        key=f"expand_panel_{key}",
+        use_container_width=True,
+        type="secondary"
+    )
+
+
+def _get_section_content(doc: AgentOSDocument, key: str) -> Any:
+    """Get content for a specific section."""
+    if not doc.features:
+        if key == "questions":
+            return doc.questions
+        return None
+
+    feature = doc.features[0]
+
+    content_map = {
+        "overview": feature.get("overview", ""),
+        "requirements_functional": feature.get("requirements_functional", []),
+        "requirements_technical": feature.get("requirements_technical", []),
+        "user_stories": feature.get("user_stories", []),
+        "acceptance_criteria": feature.get("acceptance_criteria", []),
+        "technical_spec": feature.get("technical_spec", {}),
+        "success_metrics": feature.get("success_metrics", ""),
+        "questions": doc.questions,
+    }
+
+    return content_map.get(key)
+
+
+def _get_content_preview(content: Any) -> str:
+    """Get a preview of section content."""
+    if not content:
+        return "<em style='color: #6b7280;'>(empty)</em>"
+
+    if isinstance(content, str):
+        preview = content[:100]
+        if len(content) > 100:
+            preview += "..."
+        return preview
+
+    if isinstance(content, list):
+        if not content:
+            return "<em style='color: #6b7280;'>(empty)</em>"
+        items_preview = []
+        for item in content[:3]:
+            if len(str(item)) > 40:
+                items_preview.append(f"- {str(item)[:40]}...")
+            else:
+                items_preview.append(f"- {item}")
+        if len(content) > 3:
+            items_preview.append(f"<em>+{len(content) - 3} more</em>")
+        return "<br>".join(items_preview)
+
+    if isinstance(content, dict):
+        filled = sum(1 for v in content.values() if v)
+        return f"<em>{filled}/4 fields filled</em>"
+
+    return str(content)[:100]
+
+
+def _get_section_status_indicator(content: Any) -> str:
+    """Get status indicator for section content."""
+    if not content:
+        return "[ ]"
+
+    if isinstance(content, str):
+        return "[x]" if len(content) > 10 else "[~]"
+
+    if isinstance(content, list):
+        if len(content) >= 2:
+            return "[x]"
+        elif len(content) > 0:
+            return "[~]"
+        return "[ ]"
+
+    if isinstance(content, dict):
+        filled = sum(1 for v in content.values() if v)
+        if filled >= 3:
+            return "[x]"
+        elif filled > 0:
+            return "[~]"
+        return "[ ]"
+
+    return "[?]"
+
+
+# ============================================================================
+# CLICK-TO-EXPAND (Phase 3 - Mechanism 14)
+# ============================================================================
+
+
+def render_expanded_section(
+    doc: AgentOSDocument,
+    section_key: str,
+    db: Session,
+    project: "Project"
+) -> bool:
+    """
+    Render an expanded view of a section.
+
+    Allows viewing and editing full section content.
+
+    Args:
+        doc: AgentOSDocument
+        section_key: Section to expand
+        db: Database session
+        project: Current project
+
+    Returns:
+        True if section was modified
+    """
+    section_labels = {
+        "overview": "Overview",
+        "requirements_functional": "Functional Requirements",
+        "requirements_technical": "Technical Requirements",
+        "user_stories": "User Stories",
+        "acceptance_criteria": "Acceptance Criteria",
+        "technical_spec": "Technical Specification",
+        "success_metrics": "Success Metrics",
+        "questions": "Questions / Gaps",
+    }
+
+    label = section_labels.get(section_key, section_key)
+    color = get_section_color(section_key)
+
+    # Header with close button
+    col1, col2 = st.columns([4, 1])
+    with col1:
+        st.markdown(f"""
+        <h3 style="color: {color}; margin: 0;">{label}</h3>
+        """, unsafe_allow_html=True)
+    with col2:
+        close_btn = st.button("Close", key=f"close_expanded_{section_key}")
+
+    if close_btn:
+        if "expanded_section" in st.session_state:
+            del st.session_state["expanded_section"]
+        st.rerun()
+
+    st.divider()
+
+    # Get current content
+    content = _get_section_content(doc, section_key)
+    modified = False
+
+    # Render editable content based on type
+    if section_key in ["overview", "success_metrics"]:
+        # Text content
+        current_value = content if content else ""
+        new_value = st.text_area(
+            f"Edit {label}",
+            value=current_value,
+            height=200,
+            key=f"edit_{section_key}"
+        )
+
+        if new_value != current_value:
+            if st.button("Save Changes", type="primary", key=f"save_{section_key}"):
+                _update_section_content(doc, section_key, new_value)
+                st.session_state.agent_os_doc = doc
+                st.session_state.agent_os_doc_dict = doc.to_dict()
+                show_success(f"Updated {label}!")
+                modified = True
+                st.rerun()
+
+    elif section_key in ["requirements_functional", "requirements_technical", "user_stories", "acceptance_criteria"]:
+        # List content
+        current_items = content if content else []
+
+        st.markdown("**Current Items:**")
+        items_to_remove = []
+
+        for idx, item in enumerate(current_items):
+            col1, col2 = st.columns([4, 1])
+            with col1:
+                st.markdown(f"- {item}")
+            with col2:
+                if st.button("X", key=f"remove_{section_key}_{idx}"):
+                    items_to_remove.append(idx)
+
+        # Remove items
+        if items_to_remove:
+            new_items = [item for idx, item in enumerate(current_items) if idx not in items_to_remove]
+            _update_section_content(doc, section_key, new_items)
+            st.session_state.agent_os_doc = doc
+            st.session_state.agent_os_doc_dict = doc.to_dict()
+            modified = True
+            st.rerun()
+
+        # Add new item
+        st.markdown("**Add New Item:**")
+        new_item = st.text_input(f"New {label} item", key=f"new_{section_key}")
+        if st.button("Add Item", key=f"add_{section_key}"):
+            if new_item and new_item.strip():
+                new_items = current_items + [new_item.strip()]
+                _update_section_content(doc, section_key, new_items)
+                st.session_state.agent_os_doc = doc
+                st.session_state.agent_os_doc_dict = doc.to_dict()
+                show_success(f"Added item to {label}!")
+                modified = True
+                st.rerun()
+
+    elif section_key == "technical_spec":
+        # Dict content
+        tech_spec = content if content else {}
+
+        sub_fields = [
+            ("api_endpoints", "API Endpoints"),
+            ("data_models", "Data Models"),
+            ("dependencies", "Dependencies"),
+            ("edge_cases", "Edge Cases"),
+        ]
+
+        for field_key, field_label in sub_fields:
+            current_value = tech_spec.get(field_key, "")
+            new_value = st.text_area(
+                field_label,
+                value=current_value,
+                height=80,
+                key=f"edit_{section_key}_{field_key}"
+            )
+
+            if new_value != current_value:
+                tech_spec[field_key] = new_value
+
+        if st.button("Save Technical Spec", type="primary", key=f"save_{section_key}"):
+            _update_section_content(doc, section_key, tech_spec)
+            st.session_state.agent_os_doc = doc
+            st.session_state.agent_os_doc_dict = doc.to_dict()
+            show_success("Updated Technical Specification!")
+            modified = True
+            st.rerun()
+
+    elif section_key == "questions":
+        # Questions list (at doc level, not feature level)
+        current_items = doc.questions if doc.questions else []
+
+        st.markdown("**Current Questions:**")
+        items_to_remove = []
+
+        for idx, item in enumerate(current_items):
+            col1, col2 = st.columns([4, 1])
+            with col1:
+                st.markdown(f"- {item}")
+            with col2:
+                if st.button("X", key=f"remove_{section_key}_{idx}"):
+                    items_to_remove.append(idx)
+
+        # Remove items
+        if items_to_remove:
+            doc.questions = [item for idx, item in enumerate(current_items) if idx not in items_to_remove]
+            st.session_state.agent_os_doc = doc
+            st.session_state.agent_os_doc_dict = doc.to_dict()
+            modified = True
+            st.rerun()
+
+        # Add new question
+        st.markdown("**Add New Question:**")
+        new_item = st.text_input("New question", key=f"new_{section_key}")
+        if st.button("Add Question", key=f"add_{section_key}"):
+            if new_item and new_item.strip():
+                doc.questions.append(new_item.strip())
+                st.session_state.agent_os_doc = doc
+                st.session_state.agent_os_doc_dict = doc.to_dict()
+                show_success("Added question!")
+                modified = True
+                st.rerun()
+
+    return modified
+
+
+def _update_section_content(doc: AgentOSDocument, section_key: str, value: Any) -> None:
+    """Update content for a specific section."""
+    if not doc.features:
+        doc.features.append({
+            "name": "General",
+            "overview": "",
+            "requirements_functional": [],
+            "requirements_technical": [],
+            "user_stories": [],
+            "acceptance_criteria": [],
+            "technical_spec": {},
+            "success_metrics": ""
+        })
+
+    feature = doc.features[0]
+
+    if section_key == "overview":
+        feature["overview"] = value
+    elif section_key == "requirements_functional":
+        feature["requirements_functional"] = value
+    elif section_key == "requirements_technical":
+        feature["requirements_technical"] = value
+    elif section_key == "user_stories":
+        feature["user_stories"] = value
+    elif section_key == "acceptance_criteria":
+        feature["acceptance_criteria"] = value
+    elif section_key == "technical_spec":
+        feature["technical_spec"] = value
+    elif section_key == "success_metrics":
+        feature["success_metrics"] = value
+    elif section_key == "questions":
+        doc.questions = value
+
+    doc.calculate_completion()
 
 
 # ============================================================================

@@ -1350,3 +1350,357 @@ def _render_detected_nodes_ui(db: Session, project_id: int) -> None:
             if st.button("❌ Dismiss All", help="Dismiss all suggestions"):
                 st.session_state.detected_nodes = []
                 st.rerun()
+
+
+# ============================================================================
+# COCKPIT DASHBOARD MODE (Phase 4 - Mechanism 4)
+# ============================================================================
+
+
+def render_cockpit_mode_toggle() -> bool:
+    """
+    Render toggle for Cockpit Mode.
+
+    Returns:
+        True if cockpit mode is active
+    """
+    col1, col2 = st.columns([3, 1])
+
+    with col1:
+        st.markdown("**Layout Mode**")
+
+    with col2:
+        cockpit_mode = st.toggle(
+            "Cockpit",
+            value=st.session_state.get("cockpit_mode_active", False),
+            key="cockpit_mode_toggle",
+            help="Enable cockpit mode for all-panels-visible dashboard"
+        )
+
+    if cockpit_mode != st.session_state.get("cockpit_mode_active", False):
+        st.session_state.cockpit_mode_active = cockpit_mode
+        st.rerun()
+
+    return cockpit_mode
+
+
+def render_cockpit_dashboard(
+    db: Session,
+    project: "Project",
+    session_id: Optional[int] = None
+) -> Optional[str]:
+    """
+    Render the Cockpit Dashboard - all features visible in a grid.
+
+    Like an airplane cockpit - many small panels, all visible at once.
+    Tap any to expand.
+
+    Args:
+        db: Database session
+        project: Current project
+        session_id: Optional chat session ID
+
+    Returns:
+        Name of panel that was clicked to expand, if any
+    """
+    from app.services.agent_os_service import AgentOSDocument, create_empty_template
+
+    st.markdown("## Cockpit Dashboard")
+    st.caption("All features at a glance. Click any panel to expand.")
+
+    # Get Agent OS document
+    doc = st.session_state.get("agent_os_doc")
+    if not doc:
+        doc = create_empty_template(project.name)
+        st.session_state.agent_os_doc = doc
+
+    clicked_panel = None
+
+    # Panel definitions
+    panels = [
+        ("chat", "Chat", "Message exchange with AI"),
+        ("tree", "Tree View", "Hierarchical Agent OS view"),
+        ("gaps", "Gap Analysis", "Missing sections analysis"),
+        ("voice", "Voice Input", "Click-to-Rant & Real-Time Tagging"),
+        ("spec", "Spec View", "Full specification document"),
+        ("tags", "Tag Overlay", "Raw rant with tags"),
+        ("panels", "Multi-Panel", "All sections at once"),
+        ("config", "Settings", "Configuration & Lab Mode"),
+    ]
+
+    # Create 2 rows of 4 panels
+    row1_panels = panels[:4]
+    row2_panels = panels[4:]
+
+    # Row 1
+    cols1 = st.columns(4)
+    for idx, (key, label, description) in enumerate(row1_panels):
+        with cols1[idx]:
+            if _render_cockpit_panel(key, label, description, doc):
+                clicked_panel = key
+
+    # Row 2
+    cols2 = st.columns(4)
+    for idx, (key, label, description) in enumerate(row2_panels):
+        with cols2[idx]:
+            if _render_cockpit_panel(key, label, description, doc):
+                clicked_panel = key
+
+    # Handle panel expansion
+    if clicked_panel:
+        st.session_state.expanded_cockpit_panel = clicked_panel
+
+    # Render expanded panel if any
+    expanded = st.session_state.get("expanded_cockpit_panel")
+    if expanded:
+        st.divider()
+        _render_expanded_cockpit_panel(expanded, db, project, doc, session_id)
+
+    return clicked_panel
+
+
+def _render_cockpit_panel(
+    key: str,
+    label: str,
+    description: str,
+    doc: "AgentOSDocument"
+) -> bool:
+    """
+    Render a single cockpit panel.
+
+    Args:
+        key: Panel key
+        label: Panel label
+        description: Panel description
+        doc: AgentOSDocument for status
+
+    Returns:
+        True if panel was clicked
+    """
+    # Get panel-specific status/preview
+    status_icon, preview = _get_cockpit_panel_status(key, doc)
+
+    # Check if this panel is currently expanded
+    is_expanded = st.session_state.get("expanded_cockpit_panel") == key
+
+    # Panel styling
+    border_color = "#3b82f6" if is_expanded else "#374151"
+    bg_color = "#1e3a5f" if is_expanded else "#1f2937"
+
+    panel_html = f'''
+    <div style="
+        background: {bg_color};
+        border: 2px solid {border_color};
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 8px;
+        min-height: 100px;
+    ">
+        <div style="
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        ">
+            <span style="
+                font-size: 14px;
+                font-weight: 600;
+                color: #e5e7eb;
+            ">{status_icon} {label}</span>
+        </div>
+        <div style="
+            font-size: 11px;
+            color: #9ca3af;
+            margin-bottom: 8px;
+        ">{description}</div>
+        <div style="
+            font-size: 12px;
+            color: #6b7280;
+        ">{preview}</div>
+    </div>
+    '''
+
+    st.markdown(panel_html, unsafe_allow_html=True)
+
+    # Button for clicking
+    btn_label = "Collapse" if is_expanded else "Expand"
+    return st.button(
+        btn_label,
+        key=f"cockpit_panel_{key}",
+        use_container_width=True,
+        type="primary" if is_expanded else "secondary"
+    )
+
+
+def _get_cockpit_panel_status(key: str, doc: "AgentOSDocument") -> tuple:
+    """
+    Get status icon and preview for a cockpit panel.
+
+    Args:
+        key: Panel key
+        doc: AgentOSDocument
+
+    Returns:
+        Tuple of (status_icon, preview_text)
+    """
+    if key == "chat":
+        return ("Messages", "Send messages to AI")
+
+    elif key == "tree":
+        completion = doc.completion_percentage
+        return (f"{completion}%", f"Document completion: {completion}%")
+
+    elif key == "gaps":
+        gap_summary = doc.get_gap_summary()
+        return (
+            f"{gap_summary['total_gaps']} gaps",
+            f"{gap_summary['critical_count']} critical, {gap_summary['minor_count']} minor"
+        )
+
+    elif key == "voice":
+        is_recording = st.session_state.get("realtime_recording_active", False)
+        target = st.session_state.get("voice_target_section")
+        if is_recording:
+            return ("REC", "Recording in progress...")
+        elif target:
+            return ("Ready", f"Target: {target}")
+        return ("Ready", "Voice input available")
+
+    elif key == "spec":
+        feature_count = len(doc.features) if doc.features else 0
+        return (f"{feature_count} features", "Full specification view")
+
+    elif key == "tags":
+        has_raw = bool(doc.raw_rant)
+        return ("Has data" if has_raw else "Empty", "Raw rant with overlay")
+
+    elif key == "panels":
+        statuses = doc.get_section_status()
+        complete = sum(1 for s in statuses.values() if s == "complete")
+        return (f"{complete}/{len(statuses)}", "All sections at once")
+
+    elif key == "config":
+        lab_mode = st.session_state.get("lab_mode_active", False)
+        return ("Lab Mode" if lab_mode else "Standard", "Settings & Lab Mode")
+
+    return ("--", "")
+
+
+def _render_expanded_cockpit_panel(
+    panel_key: str,
+    db: Session,
+    project: "Project",
+    doc: "AgentOSDocument",
+    session_id: Optional[int]
+) -> None:
+    """
+    Render the expanded content for a cockpit panel.
+
+    Args:
+        panel_key: Which panel to expand
+        db: Database session
+        project: Current project
+        doc: AgentOSDocument
+        session_id: Optional chat session ID
+    """
+    # Header with close button
+    col1, col2 = st.columns([4, 1])
+    with col2:
+        if st.button("Close Panel", key="close_cockpit_panel"):
+            del st.session_state["expanded_cockpit_panel"]
+            st.rerun()
+
+    # Import panel functions
+    from app.ui.agent_os_panel import (
+        render_agent_os_tree,
+        render_gap_analysis_view,
+        render_click_to_rant_panel,
+        render_real_time_tagging_panel,
+        render_tag_overlay_view,
+        render_multi_panel_live_fill,
+        render_expanded_section,
+        render_export_options,
+    )
+
+    # Render appropriate panel content
+    if panel_key == "chat":
+        st.markdown("### Chat Panel")
+        st.info("Chat functionality is available in the main Chat tab.")
+        # Could render a mini chat here if needed
+
+    elif panel_key == "tree":
+        st.markdown("### Agent OS Tree View")
+        render_agent_os_tree(doc)
+        st.divider()
+        render_export_options(doc)
+
+    elif panel_key == "gaps":
+        st.markdown("### Gap Analysis")
+        render_gap_analysis_view(doc, db, project)
+
+    elif panel_key == "voice":
+        st.markdown("### Voice Input")
+
+        voice_tab = st.radio(
+            "Select Mode",
+            ["Click-to-Rant", "Real-Time Tagging"],
+            horizontal=True,
+            key="cockpit_voice_mode"
+        )
+
+        if voice_tab == "Click-to-Rant":
+            render_click_to_rant_panel(doc, db, project)
+        else:
+            render_real_time_tagging_panel(doc, db, project)
+
+    elif panel_key == "spec":
+        st.markdown("### Full Specification")
+        render_agent_os_tree(doc)
+
+    elif panel_key == "tags":
+        st.markdown("### Tag Overlay View")
+        raw_text = doc.raw_rant if doc.raw_rant else ""
+
+        # Get tagged segments from session if available
+        rant_data = st.session_state.get("voice_rant_data", {})
+        segments = rant_data.get("segments", [])
+
+        render_tag_overlay_view(doc, raw_text, segments)
+
+    elif panel_key == "panels":
+        st.markdown("### Multi-Panel View")
+        clicked = render_multi_panel_live_fill(doc)
+        if clicked:
+            st.session_state.expanded_section = clicked
+            st.rerun()
+
+        # Handle section expansion
+        if "expanded_section" in st.session_state:
+            st.divider()
+            render_expanded_section(
+                doc,
+                st.session_state.expanded_section,
+                db,
+                project
+            )
+
+    elif panel_key == "config":
+        st.markdown("### Settings & Lab Mode")
+        st.info("Full settings available in the Settings tab. Lab Mode controls shown below.")
+
+        # Quick Lab Mode toggle
+        lab_mode = st.toggle(
+            "Enable Lab Mode",
+            value=st.session_state.get("lab_mode_active", False),
+            key="cockpit_lab_mode_toggle"
+        )
+        st.session_state.lab_mode_active = lab_mode
+
+        if lab_mode:
+            st.markdown("**Lab Mode Active**")
+            st.caption("Test different feature combinations. See Lab tab for full controls.")
+
+
+def is_cockpit_mode_active() -> bool:
+    """Check if cockpit mode is currently active."""
+    return st.session_state.get("cockpit_mode_active", False)
