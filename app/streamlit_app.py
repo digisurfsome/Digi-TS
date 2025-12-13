@@ -36,11 +36,17 @@ from app.ui.layout import (
     render_cockpit_mode_toggle,
     render_cockpit_dashboard,
     is_cockpit_mode_active,
+    render_context_refresh,
+    render_learning_status_bar,
 )
 from app.ui.node_tree_panel import render_design_tree_panel
 from app.ui.roundtable_panel import render_roundtable_panel
 from app.ui.agent_os_panel import render_agent_os_panel
 from app.ui.lab_panel import render_lab_panel, render_lab_mode_indicator
+from app.ui.idea_bank_panel import (
+    render_warmup_modal,
+    render_idea_bank_panel,
+)
 from app.services import (
     get_or_create_default_user,
     list_all_users,
@@ -455,11 +461,37 @@ def main():
         if st.session_state.get("current_project_id") and "current_user" in locals() and current_user:
             with get_db() as db:
                 from app.services import get_project_by_id
+                from app.services.session_service import record_activity_ping
 
                 project = get_project_by_id(db, st.session_state.current_project_id)
                 if project:
                     # Show current project banner
                     st.success(f"📁 **Current Project:** {project.name}")
+
+                    # Phase 5: Show warmup modal if needed (before anything else)
+                    warmup_key = f"warmup_shown_{project.id}"
+                    if not st.session_state.get(warmup_key, False):
+                        warmup_dismissed = render_warmup_modal(db, project.id, current_user.id)
+                        if warmup_dismissed:
+                            st.session_state[warmup_key] = True
+                            st.rerun()
+                        else:
+                            # Still showing warmup, don't render anything else
+                            st.stop()
+
+                    # Phase 5: Show context refresh if returning after time away
+                    refresh_dismissed = render_context_refresh(db, project, current_user.id)
+                    if not refresh_dismissed:
+                        # Still showing refresh, don't render anything else
+                        st.stop()
+
+                    # Record activity ping
+                    record_activity_ping(db, current_user.id, project.id)
+
+                    # Show learning status bar
+                    render_learning_status_bar(db, project.id, current_user.id)
+
+                    # Render the main chat panel
                     render_chat_panel(db, current_user.id, project)
                 else:
                     st.warning("⚠️ Selected project not found. Please select a project from the sidebar.")
@@ -490,8 +522,8 @@ def main():
                     show_error("Project not found")
         else:
             # Standard tabs mode
-            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs(
-                ["🏠 System Status", "⚙️ Settings", "📋 Project Context", "🎨 Design Tree", "🤖 Agent OS", "🧪 Lab Mode", "📄 Truth Doc", "📊 Process Log", "🔄 Roundtable"]
+            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs(
+                ["🏠 System Status", "⚙️ Settings", "📋 Project Context", "🎨 Design Tree", "🤖 Agent OS", "💡 Idea Bank", "🧪 Lab Mode", "📄 Truth Doc", "📊 Process Log", "🔄 Roundtable"]
             )
 
             with tab1:
@@ -547,6 +579,20 @@ def main():
                     st.info("📁 **No Project Selected**\n\nPlease select or create a project in the left sidebar to use Agent OS.")
 
             with tab6:
+                # Idea Bank - Phase 5 Learning & Memory
+                if st.session_state.get("current_project_id"):
+                    with get_db() as db:
+                        from app.services import get_project_by_id
+
+                        project = get_project_by_id(db, st.session_state.current_project_id)
+                        if project and current_user:
+                            render_idea_bank_panel(db, project, current_user.id)
+                        else:
+                            show_error("⚠️ Selected project not found. Please select a project from the sidebar.")
+                else:
+                    st.info("📁 **No Project Selected**\n\nPlease select or create a project in the left sidebar to use Idea Bank.")
+
+            with tab7:
                 # Lab Mode - Test different feature combinations
                 if st.session_state.get("current_project_id"):
                     with get_db() as db:
@@ -560,7 +606,7 @@ def main():
                 else:
                     st.info("📁 **No Project Selected**\n\nPlease select or create a project in the left sidebar to use Lab Mode.")
 
-            with tab7:
+            with tab8:
                 if st.session_state.get("current_project_id"):
                     with get_db() as db:
                         from app.services import get_project_by_id
@@ -573,11 +619,11 @@ def main():
                 else:
                     st.info("📁 **No Project Selected**\n\nPlease select or create a project in the left sidebar to export Truth Doc.")
 
-            with tab8:
+            with tab9:
                 from app.services import render_process_log
                 render_process_log()
 
-            with tab9:
+            with tab10:
                 # Roundtable Coder - works with or without a project
                 with get_db() as db:
                     project_id = st.session_state.get("current_project_id")

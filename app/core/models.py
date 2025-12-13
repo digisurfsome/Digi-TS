@@ -689,3 +689,129 @@ class RoundtableResponse(Base, TimestampMixin):
 
     def __repr__(self):
         return f"<RoundtableResponse(id={self.id}, agent_id={self.agent_id}, vote='{self.vote}')>"
+
+
+# =============================================================================
+# PHASE 5: LEARNING & MEMORY MODELS
+# =============================================================================
+
+
+class IdeaCategory(str, enum.Enum):
+    """Category of an idea in the Idea Bank."""
+    VISION = "vision"          # High-level project vision
+    FEATURE = "feature"        # Feature ideas
+    INSIGHT = "insight"        # Key insights and realizations
+    PATTERN = "pattern"        # Recurring patterns or approaches
+
+
+class IdeaSource(str, enum.Enum):
+    """Source of an idea."""
+    MANUAL = "manual"          # User manually added
+    RANT = "rant"              # Extracted from rant
+    AI_DETECTED = "ai_detected"  # AI detected as valuable
+
+
+class IdeaStatus(str, enum.Enum):
+    """Status of an idea in the bank."""
+    ACTIVE = "active"          # Actively shown in warmups
+    RETIRED = "retired"        # User has internalized this
+    ARCHIVED = "archived"      # Removed but preserved
+
+
+class RefreshLevel(str, enum.Enum):
+    """Context refresh level based on time away."""
+    MINIMAL = "minimal"        # < 1 hour
+    BRIEF = "brief"            # 1-4 hours
+    MEDIUM = "medium"          # 4-24 hours
+    FULL = "full"              # 1-3 days
+    EXTENDED = "extended"      # 3-7 days
+    COMPLETE = "complete"      # 7+ days
+
+
+class Idea(Base, TimestampMixin):
+    """
+    Idea in the Idea Bank.
+
+    Stores ideas for daily warmup and review. Ideas are actively surfaced
+    every login until they're internalized, like flashcards for your own
+    brilliant ideas.
+    """
+    __tablename__ = "ideas"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user_profiles.id"), nullable=False, index=True)
+
+    # Idea content
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Classification
+    source: Mapped[IdeaSource] = mapped_column(
+        SQLEnum(IdeaSource),
+        default=IdeaSource.MANUAL,
+        nullable=False
+    )
+    category: Mapped[IdeaCategory] = mapped_column(
+        SQLEnum(IdeaCategory),
+        default=IdeaCategory.INSIGHT,
+        nullable=False
+    )
+    status: Mapped[IdeaStatus] = mapped_column(
+        SQLEnum(IdeaStatus),
+        default=IdeaStatus.ACTIVE,
+        nullable=False
+    )
+
+    # Rating (1-5 stars)
+    rating: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
+
+    # Warmup tracking
+    times_shown: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_shown: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+    # Source reference (e.g., rant ID or section)
+    source_ref: Mapped[Optional[str]] = mapped_column(String(255))
+
+    # Tags for additional filtering
+    tags: Mapped[Optional[list]] = mapped_column(JSON)
+
+    extra_metadata: Mapped[Optional[dict]] = mapped_column("metadata", JSON)
+
+    def __repr__(self):
+        return f"<Idea(id={self.id}, category='{self.category}', rating={self.rating}, shown={self.times_shown}x)>"
+
+
+class SessionActivity(Base, TimestampMixin):
+    """
+    Session activity tracking for pause/resume.
+
+    Tracks user activity timestamps to enable context-aware refresh
+    when users return after time away.
+    """
+    __tablename__ = "session_activities"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user_profiles.id"), nullable=False, index=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+
+    # Activity tracking
+    last_active: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    session_start: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+    # Session state for resume
+    current_feature: Mapped[Optional[str]] = mapped_column(String(255))
+    last_rant_excerpt: Mapped[Optional[str]] = mapped_column(Text)
+    agent_os_completion: Mapped[Optional[float]] = mapped_column(Float)
+    agent_os_gaps: Mapped[Optional[list]] = mapped_column(JSON)
+
+    # Full session state snapshot (JSON)
+    session_state: Mapped[Optional[dict]] = mapped_column(JSON)
+
+    # Warmup completed today
+    warmup_completed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    warmup_completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+    extra_metadata: Mapped[Optional[dict]] = mapped_column("metadata", JSON)
+
+    def __repr__(self):
+        return f"<SessionActivity(id={self.id}, user={self.user_id}, project={self.project_id}, last_active={self.last_active})>"

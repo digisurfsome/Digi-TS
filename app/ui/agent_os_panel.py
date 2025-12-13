@@ -73,6 +73,51 @@ from app.services.lab_service import (
 )
 
 
+def _update_session_activity(
+    db: Session,
+    project_id: int,
+    user_id: int,
+    doc: Optional[AgentOSDocument] = None,
+    current_feature: Optional[str] = None,
+    last_rant: Optional[str] = None,
+) -> None:
+    """
+    Update session activity with current Agent OS state.
+
+    Args:
+        db: Database session
+        project_id: Project ID
+        user_id: User ID
+        doc: Optional AgentOSDocument for completion tracking
+        current_feature: Current feature being worked on
+        last_rant: Last rant excerpt
+    """
+    try:
+        from app.services.session_service import update_activity
+
+        # Calculate completion and gaps from document
+        agent_os_completion = None
+        agent_os_gaps = None
+
+        if doc:
+            agent_os_completion = doc.calculate_completion()
+            gap_summary = doc.get_gap_summary()
+            agent_os_gaps = gap_summary.get("gap_list", [])[:5]  # Top 5 gaps
+
+        update_activity(
+            db=db,
+            user_id=user_id,
+            project_id=project_id,
+            current_feature=current_feature,
+            last_rant_excerpt=last_rant[:500] if last_rant else None,
+            agent_os_completion=agent_os_completion,
+            agent_os_gaps=agent_os_gaps,
+        )
+    except Exception:
+        # Silently ignore activity tracking errors
+        pass
+
+
 def render_agent_os_tree(doc: AgentOSDocument) -> None:
     """
     Render the Agent OS document as an interactive tree view.

@@ -1704,3 +1704,265 @@ def _render_expanded_cockpit_panel(
 def is_cockpit_mode_active() -> bool:
     """Check if cockpit mode is currently active."""
     return st.session_state.get("cockpit_mode_active", False)
+
+
+# ============================================================================
+# PHASE 5: CONTEXT REFRESH DISPLAY (Mechanism 16)
+# ============================================================================
+
+
+def render_context_refresh(
+    db: Session,
+    project: Project,
+    user_id: int,
+) -> bool:
+    """
+    Render the context refresh panel when returning after time away.
+
+    Shows appropriate refresh content based on time away:
+    - < 1 hour: Minimal (just current task)
+    - 1-4 hours: Brief (task + recent decisions)
+    - 4-24 hours: Medium (session summary + key context)
+    - 1-3 days: Full (project overview + session recap)
+    - 3-7 days: Extended (full project refresh)
+    - 7+ days: Complete (onboarding-style refresh)
+
+    Args:
+        db: Database session
+        project: Current project
+        user_id: Current user ID
+
+    Returns:
+        True if refresh was dismissed (ready to work)
+    """
+    from app.services.session_service import (
+        calculate_time_away,
+        generate_refresh_content,
+        record_activity_ping,
+        start_new_session,
+        RefreshLevel,
+    )
+
+    # Calculate time away
+    hours_away, refresh_config = calculate_time_away(db, user_id, project.id)
+
+    # If less than 30 minutes, no refresh needed
+    if hours_away < 0.5:
+        record_activity_ping(db, user_id, project.id)
+        return True
+
+    # Check if refresh was already dismissed this session
+    refresh_key = f"refresh_dismissed_{project.id}"
+    if st.session_state.get(refresh_key, False):
+        return True
+
+    # Generate refresh content
+    content = generate_refresh_content(db, user_id, project.id, project)
+
+    # Style based on refresh level
+    level = content.get("level", "minimal")
+    if level in ["minimal", "brief"]:
+        border_color = "#3b82f6"
+        bg_gradient = "linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%)"
+        icon = "👋"
+    elif level in ["medium"]:
+        border_color = "#f59e0b"
+        bg_gradient = "linear-gradient(135deg, #3a2e1e 0%, #1a1a0a 100%)"
+        icon = "📋"
+    else:  # full, extended, complete
+        border_color = "#8b5cf6"
+        bg_gradient = "linear-gradient(135deg, #2e1e5f 0%, #0f0a2a 100%)"
+        icon = "🎯"
+
+    # Render refresh panel
+    st.markdown(f"""
+    <style>
+    .refresh-container {{
+        background: {bg_gradient};
+        border: 2px solid {border_color};
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 24px;
+    }}
+    .refresh-header {{
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+    }}
+    .refresh-title {{
+        font-size: 24px;
+        font-weight: bold;
+        color: white;
+    }}
+    .refresh-time {{
+        font-size: 14px;
+        color: #94a3b8;
+        background: rgba(255, 255, 255, 0.1);
+        padding: 4px 12px;
+        border-radius: 12px;
+    }}
+    .refresh-subtitle {{
+        font-size: 14px;
+        color: #94a3b8;
+        margin-bottom: 20px;
+    }}
+    .refresh-section {{
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 12px;
+    }}
+    .refresh-section-title {{
+        font-size: 14px;
+        font-weight: 600;
+        color: #e5e7eb;
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }}
+    .refresh-section-content {{
+        font-size: 14px;
+        color: #94a3b8;
+    }}
+    .refresh-list {{
+        margin: 0;
+        padding-left: 20px;
+        color: #94a3b8;
+    }}
+    .refresh-list li {{
+        margin-bottom: 4px;
+    }}
+    </style>
+    """, unsafe_allow_html=True)
+
+    st.markdown(f"""
+    <div class="refresh-container">
+        <div class="refresh-header">
+            <span class="refresh-title">{icon} {content['title']}</span>
+            <span class="refresh-time">Away for {content['time_away']}</span>
+        </div>
+        <div class="refresh-subtitle">{content['description']}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Render sections
+    sections = content.get("sections", [])
+    for section in sections:
+        section_icon = section.get("icon", "📌")
+        section_title = section.get("title", "")
+        section_content = section.get("content", "")
+        section_type = section.get("type", "text")
+
+        with st.container():
+            st.markdown(f"**{section_icon} {section_title}**")
+
+            if section_type == "list" and isinstance(section_content, list):
+                for item in section_content:
+                    st.markdown(f"- {item}")
+            else:
+                st.markdown(f"_{section_content}_")
+
+            st.markdown("")  # Spacing
+
+    # Action buttons
+    st.markdown("")  # Spacing
+
+    col1, col2, col3 = st.columns([2, 1, 1])
+
+    with col1:
+        if st.button(
+            "Continue Working",
+            type="primary",
+            key="refresh_continue",
+            use_container_width=True,
+        ):
+            # Update activity and dismiss
+            start_new_session(db, user_id, project.id)
+            st.session_state[refresh_key] = True
+            return True
+
+    with col2:
+        if st.button(
+            "Show More",
+            key="refresh_show_more",
+            use_container_width=True,
+        ):
+            # Force full refresh
+            st.session_state.force_full_refresh = True
+            st.rerun()
+
+    with col3:
+        if st.button(
+            "Start Fresh",
+            key="refresh_start_fresh",
+            use_container_width=True,
+        ):
+            from app.services.session_service import clear_resume_state
+            clear_resume_state(db, user_id, project.id)
+            st.session_state[refresh_key] = True
+            show_info("Starting fresh - previous session state cleared")
+            return True
+
+    return False
+
+
+def render_learning_status_bar(
+    db: Session,
+    project_id: int,
+    user_id: int,
+) -> None:
+    """
+    Render a compact status bar showing Idea Bank and Session status.
+
+    For display in the main layout header area.
+
+    Args:
+        db: Database session
+        project_id: Project ID
+        user_id: User ID
+    """
+    from app.services.idea_bank_service import get_idea_stats
+    from app.services.session_service import needs_warmup
+
+    try:
+        stats = get_idea_stats(db, project_id, user_id)
+        warmup_needed = needs_warmup(db, user_id, project_id)
+
+        col1, col2, col3 = st.columns([1, 1, 2])
+
+        with col1:
+            if warmup_needed:
+                st.markdown("""
+                <span style="
+                    background: #fbbf24;
+                    color: #1e293b;
+                    padding: 4px 12px;
+                    border-radius: 12px;
+                    font-size: 12px;
+                    font-weight: 600;
+                ">Warmup Pending</span>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown("""
+                <span style="
+                    background: #059669;
+                    color: white;
+                    padding: 4px 12px;
+                    border-radius: 12px;
+                    font-size: 12px;
+                ">Ready</span>
+                """, unsafe_allow_html=True)
+
+        with col2:
+            st.markdown(f"""
+            <span style="
+                color: #6b7280;
+                font-size: 12px;
+            ">Ideas: {stats['active']} active</span>
+            """, unsafe_allow_html=True)
+
+    except Exception:
+        # Silently ignore errors in status bar
+        pass
