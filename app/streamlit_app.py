@@ -38,6 +38,9 @@ from app.ui.layout import (
     is_cockpit_mode_active,
     render_context_refresh,
     render_learning_status_bar,
+    inject_compact_css,
+    render_compact_status_bar,
+    render_inline_context_refresh,
 )
 from app.ui.node_tree_panel import render_design_tree_panel
 from app.ui.roundtable_panel import render_roundtable_panel
@@ -358,8 +361,11 @@ def main():
         page_title=settings.APP_NAME,
         page_icon="🎨",
         layout="wide",
-        initial_sidebar_state="expanded",
+        initial_sidebar_state="collapsed",  # Start collapsed for more space
     )
+
+    # Inject compact CSS for tight layout
+    inject_compact_css()
 
     # Initialize session state
     init_session_state()
@@ -370,11 +376,7 @@ def main():
         render_footer()
         return
 
-    # Render header
-    render_header(
-        settings.APP_NAME,
-        "AI-Powered Design Management System",
-    )
+    # NO BIG HEADER - we use compact status bar instead
 
     # Check database connection first
     if not settings.DATABASE_URL:
@@ -455,6 +457,43 @@ def main():
         st.divider()
         st.caption(f"{settings.APP_NAME} v{settings.APP_VERSION}")
 
+    # =========================================================================
+    # COMPACT LAYOUT: Status bar at top, then columns
+    # =========================================================================
+
+    # Get project and user info for status bar
+    project = None
+    time_away_str = None
+    ideas_count = 0
+    is_ready = True
+
+    if st.session_state.get("current_project_id") and "current_user" in locals() and current_user:
+        with get_db() as db:
+            from app.services import get_project_by_id
+            from app.services.idea_bank_service import get_idea_stats
+            from app.services.session_service import needs_warmup, calculate_time_away, format_time_away
+
+            project = get_project_by_id(db, st.session_state.current_project_id)
+            if project:
+                # Get stats for status bar
+                try:
+                    stats = get_idea_stats(db, project.id, current_user.id)
+                    ideas_count = stats.get('active', 0)
+                    is_ready = not needs_warmup(db, current_user.id, project.id)
+                    hours_away, _ = calculate_time_away(db, current_user.id, project.id)
+                    if hours_away >= 0.5:
+                        time_away_str = format_time_away(hours_away)
+                except Exception:
+                    pass
+
+                # Render compact status bar at TOP (above columns)
+                render_compact_status_bar(
+                    project_name=project.name,
+                    is_ready=is_ready,
+                    ideas_count=ideas_count,
+                    time_away_str=time_away_str,
+                )
+
     # Main content area with columns (chat on left, tabs on right)
     chat_col, main_col = st.columns([1, 2])
 
@@ -467,9 +506,6 @@ def main():
 
                 project = get_project_by_id(db, st.session_state.current_project_id)
                 if project:
-                    # Show current project banner
-                    st.success(f"📁 **Current Project:** {project.name}")
-
                     # Phase 5: Show warmup modal if needed (before anything else)
                     warmup_key = f"warmup_shown_{project.id}"
                     if not st.session_state.get(warmup_key, False):
@@ -481,8 +517,8 @@ def main():
                             # Still showing warmup, don't render anything else
                             st.stop()
 
-                    # Phase 5: Show context refresh if returning after time away
-                    refresh_dismissed = render_context_refresh(db, project, current_user.id)
+                    # Phase 5: Compact inline context refresh
+                    refresh_dismissed, _ = render_inline_context_refresh(db, project, current_user.id)
                     if not refresh_dismissed:
                         # Still showing refresh, don't render anything else
                         st.stop()
@@ -490,23 +526,20 @@ def main():
                     # Record activity ping
                     record_activity_ping(db, current_user.id, project.id)
 
-                    # Show learning status bar
-                    render_learning_status_bar(db, project.id, current_user.id)
-
-                    # Render the main chat panel
+                    # Render the main chat panel (no extra status bar needed)
                     render_chat_panel(db, current_user.id, project)
                 else:
-                    st.warning("⚠️ Selected project not found. Please select a project from the sidebar.")
+                    st.warning("⚠️ Project not found. Select one from sidebar.")
         else:
-            st.info("📁 **No Project Selected**\n\nPlease select or create a project in the left sidebar to start chatting with AI.")
+            st.info("📁 Select a project from the sidebar to start.")
 
     # Right column: Tabs
     with main_col:
         # Check for Cockpit Mode
         cockpit_active = is_cockpit_mode_active()
 
-        # Show mode toggle at top
-        mode_col1, mode_col2 = st.columns([3, 1])
+        # Compact mode toggle row
+        mode_col1, mode_col2 = st.columns([4, 1])
         with mode_col2:
             render_cockpit_mode_toggle()
         with mode_col1:
