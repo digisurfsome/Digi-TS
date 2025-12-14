@@ -180,36 +180,26 @@ def render_compact_status_bar(
 ) -> None:
     """
     Render a single-row compact status bar with all key info.
-
-    Args:
-        project_name: Current project name
-        is_ready: Whether warmup is complete
-        ideas_count: Number of active ideas
-        time_away_str: Time away string (e.g., "6 hours")
+    Uses native Streamlit components for reliability.
     """
-    status_badge = "Ready" if is_ready else "Warmup"
-    badge_class = "badge-green" if is_ready else "badge-yellow"
+    # Use columns for horizontal layout
+    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
 
-    time_html = ""
-    if time_away_str:
-        time_html = f'<span class="time-badge">Away {time_away_str}</span>'
+    with col1:
+        st.markdown(f"📁 **{project_name}**")
 
-    st.markdown(f"""
-    <div class="compact-status-bar">
-        <div class="status-item">
-            <span>📁</span>
-            <strong>{project_name}</strong>
-        </div>
-        <div class="status-item">
-            {time_html}
-            <span class="status-badge {badge_class}">{status_badge}</span>
-        </div>
-        <div class="status-item">
-            <span>💡</span>
-            <span>{ideas_count} ideas</span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    with col2:
+        if time_away_str:
+            st.caption(f"Away {time_away_str}")
+
+    with col3:
+        if is_ready:
+            st.success("Ready", icon="✓")
+        else:
+            st.warning("Warmup", icon="⏳")
+
+    with col4:
+        st.caption(f"💡 {ideas_count} ideas")
 
 
 def render_header(title: str, subtitle: Optional[str] = None) -> None:
