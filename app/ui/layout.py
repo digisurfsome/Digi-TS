@@ -40,9 +40,182 @@ from app.services import (
 from app.core.models import NodeType, NodeStatus
 
 
+def inject_compact_css() -> None:
+    """
+    Inject CSS to create a compact, space-efficient layout.
+    Reduces Streamlit's default padding and margins.
+    """
+    st.markdown("""
+    <style>
+    /* Reduce main container padding */
+    .main .block-container {
+        padding-top: 1rem !important;
+        padding-bottom: 1rem !important;
+        max-width: 100% !important;
+    }
+
+    /* Reduce header padding */
+    header[data-testid="stHeader"] {
+        height: 2.5rem !important;
+    }
+
+    /* Tighter tab styling */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 4px;
+        padding: 0;
+    }
+    .stTabs [data-baseweb="tab"] {
+        padding: 8px 12px !important;
+        font-size: 13px !important;
+    }
+
+    /* Reduce spacing in columns */
+    [data-testid="column"] {
+        padding: 0 8px !important;
+    }
+
+    /* Compact sidebar */
+    [data-testid="stSidebar"] {
+        min-width: 200px !important;
+        max-width: 250px !important;
+    }
+    [data-testid="stSidebar"] .block-container {
+        padding: 1rem 0.5rem !important;
+    }
+
+    /* Reduce vertical spacing between elements */
+    .element-container {
+        margin-bottom: 0.5rem !important;
+    }
+
+    /* Compact expander */
+    .streamlit-expanderHeader {
+        padding: 0.5rem !important;
+        font-size: 14px !important;
+    }
+
+    /* Tighter form elements */
+    .stTextInput, .stSelectbox, .stTextArea {
+        margin-bottom: 0.5rem !important;
+    }
+
+    /* Compact status bar */
+    .compact-status-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 16px;
+        background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+        border-radius: 8px;
+        margin-bottom: 8px;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+    .compact-status-bar .status-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 13px;
+        color: #e2e8f0;
+    }
+    .compact-status-bar .status-badge {
+        padding: 3px 10px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 600;
+    }
+    .badge-green { background: #059669; color: white; }
+    .badge-yellow { background: #d97706; color: #1e293b; }
+    .badge-blue { background: #3b82f6; color: white; }
+    .badge-purple { background: #8b5cf6; color: white; }
+
+    /* Inline refresh banner */
+    .inline-refresh-banner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 16px;
+        background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%);
+        border: 1px solid #3b82f6;
+        border-radius: 8px;
+        margin-bottom: 8px;
+    }
+    .inline-refresh-banner .refresh-text {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: #e2e8f0;
+        font-size: 13px;
+    }
+    .inline-refresh-banner .time-badge {
+        background: rgba(59, 130, 246, 0.3);
+        padding: 2px 8px;
+        border-radius: 8px;
+        font-size: 11px;
+        color: #93c5fd;
+    }
+
+    /* Hide default Streamlit branding */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+
+    /* Compact project banner */
+    .project-banner {
+        background: linear-gradient(135deg, #065f46 0%, #064e3b 100%);
+        padding: 8px 12px;
+        border-radius: 6px;
+        margin-bottom: 8px;
+        font-size: 13px;
+        color: #d1fae5;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+
+def render_compact_status_bar(
+    project_name: str,
+    is_ready: bool = True,
+    ideas_count: int = 0,
+    time_away_str: Optional[str] = None,
+) -> None:
+    """
+    Render a single-row compact status bar with all key info.
+
+    Args:
+        project_name: Current project name
+        is_ready: Whether warmup is complete
+        ideas_count: Number of active ideas
+        time_away_str: Time away string (e.g., "6 hours")
+    """
+    status_badge = "Ready" if is_ready else "Warmup"
+    badge_class = "badge-green" if is_ready else "badge-yellow"
+
+    time_html = ""
+    if time_away_str:
+        time_html = f'<span class="time-badge">Away {time_away_str}</span>'
+
+    st.markdown(f"""
+    <div class="compact-status-bar">
+        <div class="status-item">
+            <span>📁</span>
+            <strong>{project_name}</strong>
+        </div>
+        <div class="status-item">
+            {time_html}
+            <span class="status-badge {badge_class}">{status_badge}</span>
+        </div>
+        <div class="status-item">
+            <span>💡</span>
+            <span>{ideas_count} ideas</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
 def render_header(title: str, subtitle: Optional[str] = None) -> None:
     """
     Render application header.
+    NOTE: This is the OLD header - use inject_compact_css() + render_compact_status_bar() instead.
 
     Args:
         title: Main title
@@ -1908,6 +2081,63 @@ def render_context_refresh(
     return False
 
 
+def render_inline_context_refresh(
+    db: Session,
+    project: Project,
+    user_id: int,
+) -> Tuple[bool, Optional[str]]:
+    """
+    Render a compact inline banner for context refresh.
+
+    Returns:
+        Tuple of (dismissed, time_away_str)
+    """
+    from app.services.session_service import (
+        calculate_time_away,
+        format_time_away,
+        record_activity_ping,
+        start_new_session,
+    )
+
+    # Calculate time away
+    hours_away, refresh_config = calculate_time_away(db, user_id, project.id)
+
+    # If less than 30 minutes, no refresh needed
+    if hours_away < 0.5:
+        record_activity_ping(db, user_id, project.id)
+        return True, None
+
+    # Check if refresh was already dismissed this session
+    refresh_key = f"refresh_dismissed_{project.id}"
+    if st.session_state.get(refresh_key, False):
+        return True, format_time_away(hours_away)
+
+    time_str = format_time_away(hours_away)
+
+    # Compact inline banner with columns
+    col1, col2 = st.columns([4, 1])
+
+    with col1:
+        st.markdown(f"""
+        <div class="inline-refresh-banner">
+            <div class="refresh-text">
+                <span>📋</span>
+                <strong>Session Recap</strong>
+                <span class="time-badge">Away for {time_str}</span>
+                <span style="color: #94a3b8;">Welcome back! Let's recap where things stand.</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col2:
+        if st.button("Continue Working", key="inline_refresh_continue", type="primary", use_container_width=True):
+            start_new_session(db, user_id, project.id)
+            st.session_state[refresh_key] = True
+            return True, time_str
+
+    return False, time_str
+
+
 def render_learning_status_bar(
     db: Session,
     project_id: int,
@@ -1915,54 +2145,8 @@ def render_learning_status_bar(
 ) -> None:
     """
     Render a compact status bar showing Idea Bank and Session status.
-
-    For display in the main layout header area.
-
-    Args:
-        db: Database session
-        project_id: Project ID
-        user_id: User ID
+    NOTE: This is now integrated into render_compact_status_bar for better layout.
     """
-    from app.services.idea_bank_service import get_idea_stats
-    from app.services.session_service import needs_warmup
-
-    try:
-        stats = get_idea_stats(db, project_id, user_id)
-        warmup_needed = needs_warmup(db, user_id, project_id)
-
-        col1, col2, col3 = st.columns([1, 1, 2])
-
-        with col1:
-            if warmup_needed:
-                st.markdown("""
-                <span style="
-                    background: #fbbf24;
-                    color: #1e293b;
-                    padding: 4px 12px;
-                    border-radius: 12px;
-                    font-size: 12px;
-                    font-weight: 600;
-                ">Warmup Pending</span>
-                """, unsafe_allow_html=True)
-            else:
-                st.markdown("""
-                <span style="
-                    background: #059669;
-                    color: white;
-                    padding: 4px 12px;
-                    border-radius: 12px;
-                    font-size: 12px;
-                ">Ready</span>
-                """, unsafe_allow_html=True)
-
-        with col2:
-            st.markdown(f"""
-            <span style="
-                color: #6b7280;
-                font-size: 12px;
-            ">Ideas: {stats['active']} active</span>
-            """, unsafe_allow_html=True)
-
-    except Exception:
-        # Silently ignore errors in status bar
-        pass
+    # This function is kept for backwards compatibility but the
+    # compact status bar is now the preferred approach
+    pass
