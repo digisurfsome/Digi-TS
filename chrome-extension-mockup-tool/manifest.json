@@ -5,7 +5,8 @@
   "description": "Screenshot any page, select UI chunks, drag them around to create layout mockups",
   "permissions": [
     "activeTab",
-    "downloads"
+    "downloads",
+    "storage"
   ],
   "action": {
     "default_popup": "popup/popup.html",
