@@ -1,10 +1,12 @@
 // State
 const state = {
-  tool: 'select', // select, move, arrow, rect, text
+  tool: 'select', // select, move, arrow, rect, text, floatText
   color: '#ef4444',
   lineWidth: 4,
   chunks: [],
+  floatingTexts: [],
   annotations: [],
+  moodBoardImages: [],
   history: [],
   isDrawing: false,
   startX: 0,
@@ -12,11 +14,14 @@ const state = {
   currentX: 0,
   currentY: 0,
   draggedChunk: null,
+  draggedFloatText: null,
   dragOffsetX: 0,
   dragOffsetY: 0,
   baseImage: null,
   canvasOffsetX: 0,
-  canvasOffsetY: 0
+  canvasOffsetY: 0,
+  smartFillEnabled: true,
+  geminiApiKey: ''
 };
 
 // DOM Elements
@@ -24,24 +29,32 @@ const canvas = document.getElementById('mainCanvas');
 const ctx = canvas.getContext('2d');
 const canvasContainer = document.getElementById('canvasContainer');
 const chunksLayer = document.getElementById('chunksLayer');
+const floatingTextsLayer = document.getElementById('floatingTextsLayer');
 const selectionBox = document.getElementById('selectionBox');
 const statusText = document.getElementById('statusText');
 const chunkCount = document.getElementById('chunkCount');
+const floatCount = document.getElementById('floatCount');
 
 // Initialize
 async function init() {
   // Load screenshot from storage
-  const data = await chrome.storage.local.get(['screenshot']);
+  const data = await chrome.storage.local.get(['screenshot', 'geminiApiKey']);
   if (data.screenshot) {
     loadImage(data.screenshot);
   } else {
     statusText.textContent = 'No screenshot found - capture a page first';
   }
 
+  // Load saved API key
+  if (data.geminiApiKey) {
+    state.geminiApiKey = data.geminiApiKey;
+    document.getElementById('geminiApiKey').value = data.geminiApiKey;
+  }
+
   setupEventListeners();
 
   // Show instructions on first use
-  const hasSeenInstructions = localStorage.getItem('mockup-instructions-seen');
+  const hasSeenInstructions = localStorage.getItem('mockup-instructions-seen-v2');
   if (!hasSeenInstructions) {
     document.getElementById('instructionsModal').classList.remove('hidden');
   } else {
@@ -76,6 +89,7 @@ function setupEventListeners() {
   document.getElementById('arrowTool').addEventListener('click', () => setTool('arrow'));
   document.getElementById('rectTool').addEventListener('click', () => setTool('rect'));
   document.getElementById('textTool').addEventListener('click', () => setTool('text'));
+  document.getElementById('floatTextTool').addEventListener('click', () => setTool('floatText'));
 
   // Color buttons
   document.querySelectorAll('.color-btn').forEach(btn => {
@@ -91,15 +105,34 @@ function setupEventListeners() {
     state.lineWidth = parseInt(e.target.value);
   });
 
+  // Smart fill toggle
+  document.getElementById('smartFill').addEventListener('change', (e) => {
+    state.smartFillEnabled = e.target.checked;
+  });
+
   // Action buttons
   document.getElementById('undoBtn').addEventListener('click', undo);
   document.getElementById('clearChunks').addEventListener('click', clearAll);
   document.getElementById('exportBtn').addEventListener('click', exportImage);
 
+  // AI Panel
+  document.getElementById('aiSuggestBtn').addEventListener('click', () => togglePanel('ai'));
+  document.getElementById('closeSidePanel').addEventListener('click', () => closePanel());
+  document.getElementById('generateSuggestions').addEventListener('click', generateAISuggestions);
+  document.getElementById('geminiApiKey').addEventListener('change', saveApiKey);
+
+  // Mood Board Panel
+  document.getElementById('moodBoardBtn').addEventListener('click', () => togglePanel('mood'));
+  document.getElementById('closeMoodBoard').addEventListener('click', () => closePanel());
+  document.getElementById('uploadMoodBtn').addEventListener('click', () => {
+    document.getElementById('moodBoardInput').click();
+  });
+  document.getElementById('moodBoardInput').addEventListener('change', handleMoodBoardUpload);
+
   // Modal
   document.getElementById('closeModal').addEventListener('click', () => {
     document.getElementById('instructionsModal').classList.add('hidden');
-    localStorage.setItem('mockup-instructions-seen', 'true');
+    localStorage.setItem('mockup-instructions-seen-v2', 'true');
   });
 
   // Text input
@@ -120,7 +153,7 @@ function setupEventListeners() {
 
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
-    if (e.target.tagName === 'INPUT') return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
     switch(e.key.toLowerCase()) {
       case 'v': setTool('select'); break;
@@ -128,6 +161,7 @@ function setupEventListeners() {
       case 'a': setTool('arrow'); break;
       case 'r': setTool('rect'); break;
       case 't': setTool('text'); break;
+      case 'f': setTool('floatText'); break;
       case 'z': if (e.ctrlKey || e.metaKey) undo(); break;
       case 'escape': cancelAction(); break;
     }
@@ -137,7 +171,8 @@ function setupEventListeners() {
 function setTool(tool) {
   state.tool = tool;
   document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('active'));
-  document.getElementById(tool + 'Tool')?.classList.add('active');
+  const toolBtn = document.getElementById(tool + 'Tool') || document.getElementById(tool + 'TextTool');
+  toolBtn?.classList.add('active');
 
   // Update cursor
   canvas.style.cursor = tool === 'move' ? 'grab' : 'crosshair';
@@ -148,12 +183,13 @@ function setTool(tool) {
     move: 'Click and drag chunks to move them',
     arrow: 'Click and drag to draw an arrow',
     rect: 'Click and drag to draw a rectangle',
-    text: 'Click to place text'
+    text: 'Click to place text on canvas',
+    floatText: 'Click to place a movable floating label'
   };
   statusText.textContent = statusMessages[tool] || 'Ready';
 
   // Hide text input if switching away
-  if (tool !== 'text') {
+  if (tool !== 'text' && tool !== 'floatText') {
     document.getElementById('textInputContainer').classList.add('hidden');
   }
 }
@@ -175,7 +211,7 @@ function handleMouseDown(e) {
   state.startX = pos.x;
   state.startY = pos.y;
 
-  if (state.tool === 'text') {
+  if (state.tool === 'text' || state.tool === 'floatText') {
     showTextInput(e.clientX, e.clientY, pos.x, pos.y);
     state.isDrawing = false;
   }
@@ -228,6 +264,63 @@ function handleMouseUp(e) {
   }
 }
 
+// Smart Fill: Sample average background color from edges of selection
+function sampleBackgroundColor(x, y, width, height) {
+  if (!state.baseImage) return '#000000';
+
+  // Create a temporary canvas to sample the image
+  const tempCanvas = document.createElement('canvas');
+  tempCanvas.width = state.baseImage.width;
+  tempCanvas.height = state.baseImage.height;
+  const tempCtx = tempCanvas.getContext('2d');
+  tempCtx.drawImage(state.baseImage, 0, 0);
+
+  // Sample pixels from the edges of the selection
+  const sampleSize = 5;
+  const samples = [];
+
+  // Top edge
+  for (let i = 0; i < width; i += Math.max(1, Math.floor(width / sampleSize))) {
+    if (y > 0) {
+      const pixel = tempCtx.getImageData(Math.floor(x + i), Math.floor(y - 1), 1, 1).data;
+      samples.push([pixel[0], pixel[1], pixel[2]]);
+    }
+  }
+
+  // Bottom edge
+  for (let i = 0; i < width; i += Math.max(1, Math.floor(width / sampleSize))) {
+    if (y + height < tempCanvas.height) {
+      const pixel = tempCtx.getImageData(Math.floor(x + i), Math.floor(y + height), 1, 1).data;
+      samples.push([pixel[0], pixel[1], pixel[2]]);
+    }
+  }
+
+  // Left edge
+  for (let i = 0; i < height; i += Math.max(1, Math.floor(height / sampleSize))) {
+    if (x > 0) {
+      const pixel = tempCtx.getImageData(Math.floor(x - 1), Math.floor(y + i), 1, 1).data;
+      samples.push([pixel[0], pixel[1], pixel[2]]);
+    }
+  }
+
+  // Right edge
+  for (let i = 0; i < height; i += Math.max(1, Math.floor(height / sampleSize))) {
+    if (x + width < tempCanvas.width) {
+      const pixel = tempCtx.getImageData(Math.floor(x + width), Math.floor(y + i), 1, 1).data;
+      samples.push([pixel[0], pixel[1], pixel[2]]);
+    }
+  }
+
+  if (samples.length === 0) return '#000000';
+
+  // Calculate average color
+  const avg = samples.reduce((acc, [r, g, b]) => {
+    return [acc[0] + r, acc[1] + g, acc[2] + b];
+  }, [0, 0, 0]).map(v => Math.round(v / samples.length));
+
+  return `rgb(${avg[0]}, ${avg[1]}, ${avg[2]})`;
+}
+
 function createChunk() {
   const x = Math.min(state.startX, state.currentX);
   const y = Math.min(state.startY, state.currentY);
@@ -235,6 +328,9 @@ function createChunk() {
   const height = Math.abs(state.currentY - state.startY);
 
   if (width < 10 || height < 10) return; // Too small
+
+  // Sample background color if smart fill is enabled
+  const bgColor = state.smartFillEnabled ? sampleBackgroundColor(x, y, width, height) : 'rgba(0, 0, 0, 0.3)';
 
   // Create image data for the chunk
   const chunkCanvas = document.createElement('canvas');
@@ -251,7 +347,8 @@ function createChunk() {
     y: y,
     width: width,
     height: height,
-    imageData: chunkCanvas.toDataURL()
+    imageData: chunkCanvas.toDataURL(),
+    backgroundColor: bgColor
   };
 
   state.chunks.push(chunk);
@@ -361,6 +458,115 @@ function deleteChunk(id) {
   render();
 }
 
+// Floating Text Functions
+function createFloatingText(text, canvasX, canvasY) {
+  const floatText = {
+    id: 'float-' + Date.now(),
+    text: text,
+    x: canvasX,
+    y: canvasY,
+    color: state.color
+  };
+
+  state.floatingTexts.push(floatText);
+  saveHistory();
+  createFloatingTextElement(floatText);
+  updateFloatCount();
+}
+
+function createFloatingTextElement(floatText) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = rect.width / canvas.width;
+  const scaleY = rect.height / canvas.height;
+
+  const div = document.createElement('div');
+  div.className = 'floating-text';
+  div.id = floatText.id;
+  div.textContent = floatText.text;
+  div.style.left = (floatText.x * scaleX + rect.left) + 'px';
+  div.style.top = (floatText.y * scaleY + rect.top) + 'px';
+  div.style.borderColor = floatText.color;
+  div.style.color = floatText.color;
+
+  // Delete button
+  const deleteBtn = document.createElement('button');
+  deleteBtn.className = 'floating-text-delete';
+  deleteBtn.innerHTML = '×';
+  deleteBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    deleteFloatingText(floatText.id);
+  });
+  div.appendChild(deleteBtn);
+
+  // Drag events
+  div.addEventListener('mousedown', (e) => startDragFloatText(e, floatText));
+
+  floatingTextsLayer.appendChild(div);
+}
+
+function startDragFloatText(e, floatText) {
+  e.preventDefault();
+  const div = document.getElementById(floatText.id);
+  div.classList.add('dragging');
+
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = rect.width / canvas.width;
+  const scaleY = rect.height / canvas.height;
+
+  state.draggedFloatText = floatText;
+  state.dragOffsetX = e.clientX - (floatText.x * scaleX + rect.left);
+  state.dragOffsetY = e.clientY - (floatText.y * scaleY + rect.top);
+
+  const moveHandler = (e) => dragFloatText(e);
+  const upHandler = () => {
+    document.removeEventListener('mousemove', moveHandler);
+    document.removeEventListener('mouseup', upHandler);
+    endDragFloatText();
+  };
+
+  document.addEventListener('mousemove', moveHandler);
+  document.addEventListener('mouseup', upHandler);
+}
+
+function dragFloatText(e) {
+  if (!state.draggedFloatText) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = rect.width / canvas.width;
+  const scaleY = rect.height / canvas.height;
+
+  const newX = (e.clientX - state.dragOffsetX - rect.left) / scaleX;
+  const newY = (e.clientY - state.dragOffsetY - rect.top) / scaleY;
+
+  state.draggedFloatText.x = newX;
+  state.draggedFloatText.y = newY;
+
+  const div = document.getElementById(state.draggedFloatText.id);
+  div.style.left = (newX * scaleX + rect.left) + 'px';
+  div.style.top = (newY * scaleY + rect.top) + 'px';
+}
+
+function endDragFloatText() {
+  if (state.draggedFloatText) {
+    const div = document.getElementById(state.draggedFloatText.id);
+    div.classList.remove('dragging');
+    saveHistory();
+  }
+  state.draggedFloatText = null;
+}
+
+function deleteFloatingText(id) {
+  state.floatingTexts = state.floatingTexts.filter(f => f.id !== id);
+  const div = document.getElementById(id);
+  if (div) div.remove();
+  saveHistory();
+  updateFloatCount();
+}
+
+function updateFloatCount() {
+  floatCount.textContent = `Labels: ${state.floatingTexts.length}`;
+}
+
 function createAnnotation() {
   const annotation = {
     type: state.tool,
@@ -439,17 +645,26 @@ function submitText() {
   const text = input.value.trim();
 
   if (text) {
-    const annotation = {
-      type: 'text',
-      x: parseFloat(container.dataset.canvasX),
-      y: parseFloat(container.dataset.canvasY),
-      text: text,
-      color: state.color,
-      fontSize: 16 + state.lineWidth * 4
-    };
-    state.annotations.push(annotation);
-    saveHistory();
-    render();
+    const canvasX = parseFloat(container.dataset.canvasX);
+    const canvasY = parseFloat(container.dataset.canvasY);
+
+    if (state.tool === 'floatText') {
+      // Create floating text overlay
+      createFloatingText(text, canvasX, canvasY);
+    } else {
+      // Create canvas annotation text
+      const annotation = {
+        type: 'text',
+        x: canvasX,
+        y: canvasY,
+        text: text,
+        color: state.color,
+        fontSize: 16 + state.lineWidth * 4
+      };
+      state.annotations.push(annotation);
+      saveHistory();
+      render();
+    }
   }
 
   input.value = '';
@@ -465,9 +680,9 @@ function render() {
   // Draw base image
   ctx.drawImage(state.baseImage, 0, 0);
 
-  // Draw "holes" where chunks were cut (darkened areas)
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+  // Draw filled areas where chunks were cut (smart fill or dark overlay)
   state.chunks.forEach(chunk => {
+    ctx.fillStyle = chunk.backgroundColor || 'rgba(0, 0, 0, 0.3)';
     ctx.fillRect(chunk.originalX, chunk.originalY, chunk.width, chunk.height);
   });
 
@@ -488,6 +703,7 @@ function render() {
 function saveHistory() {
   state.history.push({
     chunks: JSON.parse(JSON.stringify(state.chunks)),
+    floatingTexts: JSON.parse(JSON.stringify(state.floatingTexts)),
     annotations: JSON.parse(JSON.stringify(state.annotations))
   });
   // Keep only last 20 states
@@ -502,10 +718,13 @@ function undo() {
 
   if (prevState) {
     state.chunks = prevState.chunks;
+    state.floatingTexts = prevState.floatingTexts;
     state.annotations = prevState.annotations;
     rebuildChunks();
+    rebuildFloatingTexts();
     render();
     updateChunkCount();
+    updateFloatCount();
   }
 }
 
@@ -514,15 +733,23 @@ function rebuildChunks() {
   state.chunks.forEach(chunk => createChunkElement(chunk));
 }
 
+function rebuildFloatingTexts() {
+  floatingTextsLayer.innerHTML = '';
+  state.floatingTexts.forEach(ft => createFloatingTextElement(ft));
+}
+
 function clearAll() {
-  if (!confirm('Clear all chunks and annotations?')) return;
+  if (!confirm('Clear all chunks, labels, and annotations?')) return;
 
   state.chunks = [];
+  state.floatingTexts = [];
   state.annotations = [];
   chunksLayer.innerHTML = '';
+  floatingTextsLayer.innerHTML = '';
   saveHistory();
   render();
   updateChunkCount();
+  updateFloatCount();
 }
 
 function updateChunkCount() {
@@ -536,6 +763,206 @@ function cancelAction() {
   render();
 }
 
+// Panel Functions
+function togglePanel(panel) {
+  const sidePanel = document.getElementById('sidePanel');
+  const aiPanel = document.getElementById('aiPanel');
+  const moodPanel = document.getElementById('moodBoardPanel');
+
+  if (sidePanel.classList.contains('hidden')) {
+    sidePanel.classList.remove('hidden');
+  }
+
+  if (panel === 'ai') {
+    aiPanel.classList.remove('hidden');
+    moodPanel.classList.add('hidden');
+  } else {
+    aiPanel.classList.add('hidden');
+    moodPanel.classList.remove('hidden');
+  }
+}
+
+function closePanel() {
+  document.getElementById('sidePanel').classList.add('hidden');
+}
+
+// AI Functions
+function saveApiKey() {
+  state.geminiApiKey = document.getElementById('geminiApiKey').value;
+  chrome.storage.local.set({ geminiApiKey: state.geminiApiKey });
+}
+
+async function generateAISuggestions() {
+  const apiKey = document.getElementById('geminiApiKey').value;
+  const prompt = document.getElementById('aiPrompt').value;
+
+  if (!apiKey) {
+    alert('Please enter your Gemini API key');
+    return;
+  }
+
+  if (!prompt) {
+    alert('Please describe what you want');
+    return;
+  }
+
+  const loading = document.getElementById('aiLoading');
+  const suggestions = document.getElementById('aiSuggestions');
+  const btn = document.getElementById('generateSuggestions');
+
+  loading.classList.remove('hidden');
+  suggestions.innerHTML = '';
+  btn.disabled = true;
+
+  try {
+    // Get current layout state
+    const layoutData = {
+      canvasWidth: canvas.width,
+      canvasHeight: canvas.height,
+      chunks: state.chunks.map(c => ({
+        originalX: c.originalX,
+        originalY: c.originalY,
+        currentX: c.x,
+        currentY: c.y,
+        width: c.width,
+        height: c.height
+      })),
+      moodBoardStyles: state.moodBoardImages.length > 0 ? 'User has uploaded mood board images' : 'No mood board'
+    };
+
+    const systemPrompt = `You are a UI/UX design expert. The user has a mockup tool where they've cut out UI chunks from a screenshot and want to rearrange them.
+
+Current layout data:
+${JSON.stringify(layoutData, null, 2)}
+
+The user wants: ${prompt}
+
+Provide exactly 4 different layout suggestions. For each suggestion:
+1. Give it a short name (e.g., "Tight Grid", "Centered Stack")
+2. Explain the design principle behind it (2-3 sentences)
+3. Describe specific changes (spacing, alignment, grouping)
+
+Format your response as JSON:
+{
+  "suggestions": [
+    {
+      "name": "Layout Name",
+      "principle": "Design principle explanation",
+      "changes": "Specific changes to make"
+    }
+  ]
+}`;
+
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: systemPrompt }] }],
+        generationConfig: {
+          temperature: 0.7,
+          maxOutputTokens: 1500
+        }
+      })
+    });
+
+    const data = await response.json();
+
+    if (data.error) {
+      throw new Error(data.error.message);
+    }
+
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+    // Parse JSON from response
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      displaySuggestions(parsed.suggestions);
+    } else {
+      suggestions.innerHTML = `<div class="suggestion-card"><p>${text}</p></div>`;
+    }
+
+  } catch (error) {
+    console.error('AI Error:', error);
+    suggestions.innerHTML = `<div class="suggestion-card"><p style="color:#ef4444">Error: ${error.message}</p></div>`;
+  } finally {
+    loading.classList.add('hidden');
+    btn.disabled = false;
+  }
+}
+
+function displaySuggestions(suggestionsData) {
+  const container = document.getElementById('aiSuggestions');
+  container.innerHTML = '';
+
+  suggestionsData.forEach((s, i) => {
+    const card = document.createElement('div');
+    card.className = 'suggestion-card';
+    card.innerHTML = `
+      <h4>Option ${i + 1}: ${s.name}</h4>
+      <p><strong>Principle:</strong> ${s.principle}</p>
+      <p><strong>Changes:</strong> ${s.changes}</p>
+    `;
+    container.appendChild(card);
+  });
+}
+
+// Mood Board Functions
+function handleMoodBoardUpload(e) {
+  const files = e.target.files;
+
+  Array.from(files).forEach(file => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const imgData = event.target.result;
+      state.moodBoardImages.push({
+        id: 'mood-' + Date.now() + Math.random(),
+        data: imgData
+      });
+      renderMoodBoard();
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function renderMoodBoard() {
+  const grid = document.getElementById('moodBoardGrid');
+  grid.innerHTML = '';
+
+  state.moodBoardImages.forEach(img => {
+    const item = document.createElement('div');
+    item.className = 'mood-item';
+    item.innerHTML = `
+      <img src="${img.data}" alt="Mood reference">
+      <button class="mood-item-delete" data-id="${img.id}">×</button>
+    `;
+    item.querySelector('.mood-item-delete').addEventListener('click', () => {
+      state.moodBoardImages = state.moodBoardImages.filter(m => m.id !== img.id);
+      renderMoodBoard();
+    });
+    grid.appendChild(item);
+  });
+
+  // Show/hide style analysis
+  const analysis = document.getElementById('styleAnalysis');
+  if (state.moodBoardImages.length > 0) {
+    analysis.classList.remove('hidden');
+    document.getElementById('styleDetails').innerHTML = `
+      <div class="style-detail">
+        <span class="label">Images uploaded:</span>
+        <span class="value">${state.moodBoardImages.length}</span>
+      </div>
+      <div class="style-detail">
+        <span class="label">Status:</span>
+        <span class="value">Ready for AI analysis</span>
+      </div>
+    `;
+  } else {
+    analysis.classList.add('hidden');
+  }
+}
+
+// Export Function
 async function exportImage() {
   statusText.textContent = 'Exporting...';
 
@@ -545,7 +972,7 @@ async function exportImage() {
   exportCanvas.height = canvas.height;
   const exportCtx = exportCanvas.getContext('2d');
 
-  // Draw base with holes
+  // Draw base with filled holes
   exportCtx.drawImage(canvas, 0, 0);
 
   // Draw chunks at their new positions
@@ -558,9 +985,22 @@ async function exportImage() {
     exportCtx.drawImage(img, chunk.x, chunk.y);
   }
 
+  // Draw floating text labels
+  state.floatingTexts.forEach(ft => {
+    exportCtx.font = 'bold 14px -apple-system, sans-serif';
+    exportCtx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    const textWidth = exportCtx.measureText(ft.text).width;
+    exportCtx.fillRect(ft.x - 6, ft.y - 16, textWidth + 24, 28);
+    exportCtx.strokeStyle = ft.color;
+    exportCtx.lineWidth = 2;
+    exportCtx.strokeRect(ft.x - 6, ft.y - 16, textWidth + 24, 28);
+    exportCtx.fillStyle = ft.color;
+    exportCtx.fillText(ft.text, ft.x + 6, ft.y + 4);
+  });
+
   // Create download
   const dataUrl = exportCanvas.toDataURL('image/png');
-  const filename = `mockup-${Date.now()}.png`;
+  const filename = `ui-shuffle-mockup-${Date.now()}.png`;
 
   // Use chrome downloads API
   chrome.runtime.sendMessage({
@@ -572,10 +1012,11 @@ async function exportImage() {
   statusText.textContent = 'Exported! Check your downloads.';
 }
 
-// Handle window resize to reposition chunks
+// Handle window resize to reposition elements
 window.addEventListener('resize', () => {
   updateCanvasOffset();
   rebuildChunks();
+  rebuildFloatingTexts();
 });
 
 // Start

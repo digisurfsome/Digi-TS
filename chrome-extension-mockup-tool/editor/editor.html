@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>UI Mockup Editor</title>
+  <title>UI Shuffle - Mockup Editor</title>
   <link rel="stylesheet" href="editor.css">
 </head>
 <body>
@@ -27,9 +27,13 @@
           <span>⬜</span>
           <span class="tool-label">Rect</span>
         </button>
-        <button id="textTool" class="tool-btn" title="Add Text (T)">
+        <button id="textTool" class="tool-btn" title="Add Text Label (T)">
           <span>📝</span>
           <span class="tool-label">Text</span>
+        </button>
+        <button id="floatTextTool" class="tool-btn" title="Add Floating Text (F)">
+          <span>🏷️</span>
+          <span class="tool-label">Float</span>
         </button>
       </div>
 
@@ -48,6 +52,11 @@
           <option value="4" selected>Medium</option>
           <option value="8">Thick</option>
         </select>
+        <div class="divider"></div>
+        <label class="checkbox-label" title="Sample and fill background when cutting chunks">
+          <input type="checkbox" id="smartFill" checked>
+          <span>Smart Fill</span>
+        </label>
       </div>
 
       <div class="toolbar-section">
@@ -55,9 +64,18 @@
           <span>↩️</span>
           <span class="tool-label">Undo</span>
         </button>
-        <button id="clearChunks" class="tool-btn" title="Clear All Chunks">
+        <button id="clearChunks" class="tool-btn" title="Clear All">
           <span>🗑️</span>
           <span class="tool-label">Clear</span>
+        </button>
+        <div class="divider"></div>
+        <button id="aiSuggestBtn" class="tool-btn ai-btn" title="Get AI Layout Suggestions">
+          <span>✨</span>
+          <span class="tool-label">AI</span>
+        </button>
+        <button id="moodBoardBtn" class="tool-btn" title="Open Mood Board">
+          <span>🎨</span>
+          <span class="tool-label">Mood</span>
         </button>
         <div class="divider"></div>
         <button id="exportBtn" class="tool-btn export-btn" title="Export PNG">
@@ -67,14 +85,70 @@
       </div>
     </div>
 
-    <!-- Canvas Area -->
-    <div class="canvas-container" id="canvasContainer">
-      <canvas id="mainCanvas"></canvas>
-      <div class="selection-box" id="selectionBox"></div>
-      <div id="chunksLayer"></div>
-      <div id="textInputContainer" class="text-input-container hidden">
-        <input type="text" id="textInput" placeholder="Enter text...">
-        <button id="textSubmit">Add</button>
+    <!-- Main Content Area -->
+    <div class="main-content">
+      <!-- Canvas Area -->
+      <div class="canvas-container" id="canvasContainer">
+        <canvas id="mainCanvas"></canvas>
+        <div class="selection-box" id="selectionBox"></div>
+        <div id="chunksLayer"></div>
+        <div id="floatingTextsLayer"></div>
+        <div id="textInputContainer" class="text-input-container hidden">
+          <input type="text" id="textInput" placeholder="Enter text...">
+          <button id="textSubmit">Add</button>
+        </div>
+      </div>
+
+      <!-- Side Panel (AI & Mood Board) -->
+      <div class="side-panel hidden" id="sidePanel">
+        <!-- AI Suggestions Tab -->
+        <div class="panel-tab" id="aiPanel">
+          <div class="panel-header">
+            <h3>✨ AI Layout Suggestions</h3>
+            <button class="panel-close" id="closeSidePanel">×</button>
+          </div>
+          <div class="panel-content">
+            <div class="api-key-section">
+              <label>Gemini API Key:</label>
+              <input type="password" id="geminiApiKey" placeholder="Enter your API key">
+              <a href="https://makersuite.google.com/app/apikey" target="_blank" class="api-link">Get free key</a>
+            </div>
+            <div class="prompt-section">
+              <label>What do you want?</label>
+              <textarea id="aiPrompt" placeholder="e.g., Make the spacing tighter, align elements to a grid, suggest a cleaner layout..."></textarea>
+            </div>
+            <button id="generateSuggestions" class="generate-btn">
+              <span>🚀</span> Generate 4 Layout Options
+            </button>
+            <div id="aiLoading" class="ai-loading hidden">
+              <div class="spinner"></div>
+              <span>Analyzing your layout...</span>
+            </div>
+            <div id="aiSuggestions" class="ai-suggestions"></div>
+          </div>
+        </div>
+
+        <!-- Mood Board Tab -->
+        <div class="panel-tab hidden" id="moodBoardPanel">
+          <div class="panel-header">
+            <h3>🎨 Mood Board</h3>
+            <button class="panel-close" id="closeMoodBoard">×</button>
+          </div>
+          <div class="panel-content">
+            <p class="panel-hint">Upload reference images to teach the AI your preferred style.</p>
+            <div class="mood-board-upload">
+              <input type="file" id="moodBoardInput" accept="image/*" multiple hidden>
+              <button id="uploadMoodBtn" class="upload-btn">
+                <span>📷</span> Add Reference Images
+              </button>
+            </div>
+            <div id="moodBoardGrid" class="mood-board-grid"></div>
+            <div id="styleAnalysis" class="style-analysis hidden">
+              <h4>Detected Style Preferences:</h4>
+              <div id="styleDetails"></div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -84,6 +158,8 @@
       <span class="status-right">
         <span id="chunkCount">Chunks: 0</span>
         <span class="divider">|</span>
+        <span id="floatCount">Labels: 0</span>
+        <span class="divider">|</span>
         <span id="zoomLevel">100%</span>
       </span>
     </div>
@@ -92,16 +168,18 @@
   <!-- Instructions Modal -->
   <div id="instructionsModal" class="modal">
     <div class="modal-content">
-      <h2>🎨 UI Mockup Tool</h2>
+      <h2>🎨 UI Shuffle - Mockup Editor</h2>
       <div class="instructions">
         <p><strong>How to use:</strong></p>
         <ol>
           <li><strong>Select Tool (✂️):</strong> Draw rectangles to cut out UI chunks</li>
           <li><strong>Move Tool (✋):</strong> Drag chunks to rearrange them</li>
-          <li><strong>Annotate:</strong> Add arrows, rectangles, or text</li>
+          <li><strong>Float Text (🏷️):</strong> Add movable labels that stay on top</li>
+          <li><strong>AI (✨):</strong> Get smart layout suggestions from Gemini</li>
+          <li><strong>Mood Board (🎨):</strong> Upload reference images for style learning</li>
           <li><strong>Export:</strong> Save your mockup as PNG</li>
         </ol>
-        <p class="tip">💡 <strong>Tip:</strong> Cut out elements, then drag them closer together to show tighter spacing!</p>
+        <p class="tip">💡 <strong>Smart Fill:</strong> When enabled, cut areas fill with the background color instead of black!</p>
       </div>
       <button id="closeModal" class="close-btn">Got it!</button>
     </div>
