@@ -21,7 +21,15 @@ const state = {
   canvasOffsetX: 0,
   canvasOffsetY: 0,
   smartFillEnabled: true,
-  geminiApiKey: ''
+  geminiApiKey: '',
+  // New features
+  snapToGrid: true,
+  gridSize: 16,
+  zoom: 1,
+  selectedChunks: [], // For multi-select
+  isResizing: false,
+  resizeHandle: null,
+  resizeChunk: null
 };
 
 // DOM Elements
@@ -54,7 +62,7 @@ async function init() {
   setupEventListeners();
 
   // Show instructions on first use
-  const hasSeenInstructions = localStorage.getItem('mockup-instructions-seen-v2');
+  const hasSeenInstructions = localStorage.getItem('mockup-instructions-seen-v3');
   if (!hasSeenInstructions) {
     document.getElementById('instructionsModal').classList.remove('hidden');
   } else {
@@ -110,9 +118,28 @@ function setupEventListeners() {
     state.smartFillEnabled = e.target.checked;
   });
 
+  // Snap to grid toggle
+  document.getElementById('snapGrid').addEventListener('change', (e) => {
+    state.snapToGrid = e.target.checked;
+  });
+
+  // Grid size
+  document.getElementById('gridSize').addEventListener('change', (e) => {
+    state.gridSize = parseInt(e.target.value);
+  });
+
+  // Zoom controls
+  document.getElementById('zoomIn').addEventListener('click', () => zoomCanvas(0.1));
+  document.getElementById('zoomOut').addEventListener('click', () => zoomCanvas(-0.1));
+  document.getElementById('zoomReset').addEventListener('click', () => {
+    state.zoom = 1;
+    applyZoom();
+  });
+
   // Action buttons
   document.getElementById('undoBtn').addEventListener('click', undo);
   document.getElementById('clearChunks').addEventListener('click', clearAll);
+  document.getElementById('duplicateBtn').addEventListener('click', duplicateSelected);
   document.getElementById('exportBtn').addEventListener('click', exportImage);
 
   // AI Panel
@@ -132,7 +159,7 @@ function setupEventListeners() {
   // Modal
   document.getElementById('closeModal').addEventListener('click', () => {
     document.getElementById('instructionsModal').classList.add('hidden');
-    localStorage.setItem('mockup-instructions-seen-v2', 'true');
+    localStorage.setItem('mockup-instructions-seen-v3', 'true');
   });
 
   // Text input
@@ -146,6 +173,14 @@ function setupEventListeners() {
   canvas.addEventListener('mousemove', handleMouseMove);
   canvas.addEventListener('mouseup', handleMouseUp);
   canvas.addEventListener('mouseleave', handleMouseUp);
+
+  // Mouse wheel zoom
+  canvasContainer.addEventListener('wheel', (e) => {
+    if (e.ctrlKey) {
+      e.preventDefault();
+      zoomCanvas(e.deltaY > 0 ? -0.1 : 0.1);
+    }
+  }, { passive: false });
 
   // Window resize
   window.addEventListener('resize', updateCanvasOffset);
@@ -162,8 +197,47 @@ function setupEventListeners() {
       case 'r': setTool('rect'); break;
       case 't': setTool('text'); break;
       case 'f': setTool('floatText'); break;
-      case 'z': if (e.ctrlKey || e.metaKey) undo(); break;
-      case 'escape': cancelAction(); break;
+      case 'g': toggleSnapGrid(); break;
+      case 'd':
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          duplicateSelected();
+        }
+        break;
+      case 'z':
+        if (e.ctrlKey || e.metaKey) undo();
+        break;
+      case '=':
+      case '+':
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          zoomCanvas(0.1);
+        }
+        break;
+      case '-':
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          zoomCanvas(-0.1);
+        }
+        break;
+      case '0':
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          state.zoom = 1;
+          applyZoom();
+        }
+        break;
+      case 'escape':
+        cancelAction();
+        clearSelection();
+        break;
+    }
+  });
+
+  // Click outside chunks to deselect
+  canvas.addEventListener('click', (e) => {
+    if (!e.shiftKey) {
+      clearSelection();
     }
   });
 }
@@ -179,8 +253,8 @@ function setTool(tool) {
 
   // Update status
   const statusMessages = {
-    select: 'Draw a rectangle to select a chunk',
-    move: 'Click and drag chunks to move them',
+    select: 'Draw rectangle to cut chunk | Shift+click to multi-select',
+    move: 'Drag chunks to move | Shift+click to multi-select',
     arrow: 'Click and drag to draw an arrow',
     rect: 'Click and drag to draw a rectangle',
     text: 'Click to place text on canvas',
@@ -192,6 +266,33 @@ function setTool(tool) {
   if (tool !== 'text' && tool !== 'floatText') {
     document.getElementById('textInputContainer').classList.add('hidden');
   }
+}
+
+function toggleSnapGrid() {
+  state.snapToGrid = !state.snapToGrid;
+  document.getElementById('snapGrid').checked = state.snapToGrid;
+  statusText.textContent = `Snap to grid: ${state.snapToGrid ? 'ON' : 'OFF'}`;
+}
+
+// Zoom functions
+function zoomCanvas(delta) {
+  state.zoom = Math.max(0.25, Math.min(3, state.zoom + delta));
+  applyZoom();
+}
+
+function applyZoom() {
+  canvas.style.transform = `scale(${state.zoom})`;
+  canvas.style.transformOrigin = 'center center';
+  document.getElementById('zoomLevel').textContent = `${Math.round(state.zoom * 100)}%`;
+  updateCanvasOffset();
+  rebuildChunks();
+  rebuildFloatingTexts();
+}
+
+// Snap to grid helper
+function snapToGrid(value) {
+  if (!state.snapToGrid) return value;
+  return Math.round(value / state.gridSize) * state.gridSize;
 }
 
 function getMousePos(e) {
@@ -348,7 +449,8 @@ function createChunk() {
     width: width,
     height: height,
     imageData: chunkCanvas.toDataURL(),
-    backgroundColor: bgColor
+    backgroundColor: bgColor,
+    selected: false
   };
 
   state.chunks.push(chunk);
@@ -364,7 +466,7 @@ function createChunkElement(chunk) {
   const scaleY = rect.height / canvas.height;
 
   const div = document.createElement('div');
-  div.className = 'chunk';
+  div.className = 'chunk' + (chunk.selected ? ' selected' : '');
   div.id = chunk.id;
   div.style.left = (chunk.x * scaleX + rect.left) + 'px';
   div.style.top = (chunk.y * scaleY + rect.top) + 'px';
@@ -388,16 +490,227 @@ function createChunkElement(chunk) {
   });
   div.appendChild(deleteBtn);
 
+  // Duplicate button
+  const dupBtn = document.createElement('button');
+  dupBtn.className = 'chunk-duplicate';
+  dupBtn.innerHTML = '⧉';
+  dupBtn.title = 'Duplicate (Ctrl+D)';
+  dupBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    duplicateChunk(chunk.id);
+  });
+  div.appendChild(dupBtn);
+
+  // Resize handles
+  const handles = ['nw', 'ne', 'sw', 'se'];
+  handles.forEach(pos => {
+    const handle = document.createElement('div');
+    handle.className = `resize-handle resize-${pos}`;
+    handle.dataset.handle = pos;
+    handle.addEventListener('mousedown', (e) => startResize(e, chunk, pos));
+    div.appendChild(handle);
+  });
+
+  // Click to select (with shift for multi-select)
+  div.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (e.shiftKey) {
+      toggleChunkSelection(chunk.id);
+    } else {
+      selectChunk(chunk.id);
+    }
+  });
+
   // Drag events
-  div.addEventListener('mousedown', (e) => startDragChunk(e, chunk));
+  div.addEventListener('mousedown', (e) => {
+    if (e.target.classList.contains('resize-handle')) return;
+    startDragChunk(e, chunk);
+  });
 
   chunksLayer.appendChild(div);
 }
 
+// Selection functions
+function selectChunk(id) {
+  clearSelection();
+  const chunk = state.chunks.find(c => c.id === id);
+  if (chunk) {
+    chunk.selected = true;
+    state.selectedChunks = [id];
+    updateChunkVisuals();
+  }
+}
+
+function toggleChunkSelection(id) {
+  const chunk = state.chunks.find(c => c.id === id);
+  if (chunk) {
+    chunk.selected = !chunk.selected;
+    if (chunk.selected) {
+      state.selectedChunks.push(id);
+    } else {
+      state.selectedChunks = state.selectedChunks.filter(cid => cid !== id);
+    }
+    updateChunkVisuals();
+  }
+}
+
+function clearSelection() {
+  state.chunks.forEach(c => c.selected = false);
+  state.selectedChunks = [];
+  updateChunkVisuals();
+}
+
+function updateChunkVisuals() {
+  state.chunks.forEach(chunk => {
+    const div = document.getElementById(chunk.id);
+    if (div) {
+      if (chunk.selected) {
+        div.classList.add('selected');
+      } else {
+        div.classList.remove('selected');
+      }
+    }
+  });
+}
+
+// Resize functions
+function startResize(e, chunk, handle) {
+  e.preventDefault();
+  e.stopPropagation();
+
+  state.isResizing = true;
+  state.resizeHandle = handle;
+  state.resizeChunk = chunk;
+  state.startX = e.clientX;
+  state.startY = e.clientY;
+
+  const moveHandler = (e) => doResize(e);
+  const upHandler = () => {
+    document.removeEventListener('mousemove', moveHandler);
+    document.removeEventListener('mouseup', upHandler);
+    endResize();
+  };
+
+  document.addEventListener('mousemove', moveHandler);
+  document.addEventListener('mouseup', upHandler);
+}
+
+function doResize(e) {
+  if (!state.isResizing || !state.resizeChunk) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = rect.width / canvas.width;
+  const scaleY = rect.height / canvas.height;
+
+  const deltaX = (e.clientX - state.startX) / scaleX;
+  const deltaY = (e.clientY - state.startY) / scaleY;
+
+  const chunk = state.resizeChunk;
+  const handle = state.resizeHandle;
+
+  let newX = chunk.x;
+  let newY = chunk.y;
+  let newWidth = chunk.width;
+  let newHeight = chunk.height;
+
+  if (handle.includes('w')) {
+    newX = chunk.x + deltaX;
+    newWidth = chunk.width - deltaX;
+  }
+  if (handle.includes('e')) {
+    newWidth = chunk.width + deltaX;
+  }
+  if (handle.includes('n')) {
+    newY = chunk.y + deltaY;
+    newHeight = chunk.height - deltaY;
+  }
+  if (handle.includes('s')) {
+    newHeight = chunk.height + deltaY;
+  }
+
+  // Minimum size
+  if (newWidth < 20) newWidth = 20;
+  if (newHeight < 20) newHeight = 20;
+
+  // Apply snap
+  newX = snapToGrid(newX);
+  newY = snapToGrid(newY);
+  newWidth = snapToGrid(newWidth);
+  newHeight = snapToGrid(newHeight);
+
+  // Update chunk visually
+  const div = document.getElementById(chunk.id);
+  div.style.left = (newX * scaleX + rect.left) + 'px';
+  div.style.top = (newY * scaleY + rect.top) + 'px';
+  div.style.width = (newWidth * scaleX) + 'px';
+  div.style.height = (newHeight * scaleY) + 'px';
+
+  state.startX = e.clientX;
+  state.startY = e.clientY;
+  chunk.x = newX;
+  chunk.y = newY;
+  chunk.width = newWidth;
+  chunk.height = newHeight;
+
+  render();
+}
+
+function endResize() {
+  if (state.isResizing) {
+    saveHistory();
+  }
+  state.isResizing = false;
+  state.resizeHandle = null;
+  state.resizeChunk = null;
+}
+
+// Duplicate functions
+function duplicateSelected() {
+  if (state.selectedChunks.length === 0) {
+    statusText.textContent = 'Select a chunk first (click on it)';
+    return;
+  }
+
+  state.selectedChunks.forEach(id => duplicateChunk(id));
+}
+
+function duplicateChunk(id) {
+  const original = state.chunks.find(c => c.id === id);
+  if (!original) return;
+
+  const newChunk = {
+    ...original,
+    id: 'chunk-' + Date.now() + Math.random(),
+    x: original.x + 20,
+    y: original.y + 20,
+    selected: false
+  };
+
+  state.chunks.push(newChunk);
+  createChunkElement(newChunk);
+  saveHistory();
+  updateChunkCount();
+  render();
+
+  statusText.textContent = 'Chunk duplicated!';
+}
+
 function startDragChunk(e, chunk) {
   if (state.tool !== 'select' && state.tool !== 'move') return;
+  if (state.isResizing) return;
 
   e.preventDefault();
+
+  // If not already selected, select this chunk
+  if (!chunk.selected) {
+    if (!e.shiftKey) {
+      clearSelection();
+    }
+    chunk.selected = true;
+    state.selectedChunks.push(chunk.id);
+    updateChunkVisuals();
+  }
+
   const div = document.getElementById(chunk.id);
   div.classList.add('dragging');
 
@@ -408,6 +721,15 @@ function startDragChunk(e, chunk) {
   state.draggedChunk = chunk;
   state.dragOffsetX = e.clientX - (chunk.x * scaleX + rect.left);
   state.dragOffsetY = e.clientY - (chunk.y * scaleY + rect.top);
+
+  // Store initial positions for all selected chunks
+  state.selectedChunks.forEach(id => {
+    const c = state.chunks.find(ch => ch.id === id);
+    if (c) {
+      c._dragStartX = c.x;
+      c._dragStartY = c.y;
+    }
+  });
 
   const moveHandler = (e) => dragChunk(e);
   const upHandler = () => {
@@ -427,23 +749,43 @@ function dragChunk(e) {
   const scaleX = rect.width / canvas.width;
   const scaleY = rect.height / canvas.height;
 
-  const newX = (e.clientX - state.dragOffsetX - rect.left) / scaleX;
-  const newY = (e.clientY - state.dragOffsetY - rect.top) / scaleY;
+  let newX = (e.clientX - state.dragOffsetX - rect.left) / scaleX;
+  let newY = (e.clientY - state.dragOffsetY - rect.top) / scaleY;
 
-  state.draggedChunk.x = newX;
-  state.draggedChunk.y = newY;
+  // Apply snap to grid
+  newX = snapToGrid(newX);
+  newY = snapToGrid(newY);
 
-  const div = document.getElementById(state.draggedChunk.id);
-  div.style.left = (newX * scaleX + rect.left) + 'px';
-  div.style.top = (newY * scaleY + rect.top) + 'px';
+  const deltaX = newX - state.draggedChunk._dragStartX;
+  const deltaY = newY - state.draggedChunk._dragStartY;
+
+  // Move all selected chunks
+  state.selectedChunks.forEach(id => {
+    const chunk = state.chunks.find(c => c.id === id);
+    if (chunk) {
+      chunk.x = snapToGrid(chunk._dragStartX + deltaX);
+      chunk.y = snapToGrid(chunk._dragStartY + deltaY);
+
+      const div = document.getElementById(chunk.id);
+      div.style.left = (chunk.x * scaleX + rect.left) + 'px';
+      div.style.top = (chunk.y * scaleY + rect.top) + 'px';
+    }
+  });
 
   render();
 }
 
 function endDragChunk() {
   if (state.draggedChunk) {
-    const div = document.getElementById(state.draggedChunk.id);
-    div.classList.remove('dragging');
+    state.selectedChunks.forEach(id => {
+      const div = document.getElementById(id);
+      if (div) div.classList.remove('dragging');
+      const chunk = state.chunks.find(c => c.id === id);
+      if (chunk) {
+        delete chunk._dragStartX;
+        delete chunk._dragStartY;
+      }
+    });
     saveHistory();
   }
   state.draggedChunk = null;
@@ -451,6 +793,7 @@ function endDragChunk() {
 
 function deleteChunk(id) {
   state.chunks = state.chunks.filter(c => c.id !== id);
+  state.selectedChunks = state.selectedChunks.filter(cid => cid !== id);
   const div = document.getElementById(id);
   if (div) div.remove();
   saveHistory();
@@ -535,8 +878,12 @@ function dragFloatText(e) {
   const scaleX = rect.width / canvas.width;
   const scaleY = rect.height / canvas.height;
 
-  const newX = (e.clientX - state.dragOffsetX - rect.left) / scaleX;
-  const newY = (e.clientY - state.dragOffsetY - rect.top) / scaleY;
+  let newX = (e.clientX - state.dragOffsetX - rect.left) / scaleX;
+  let newY = (e.clientY - state.dragOffsetY - rect.top) / scaleY;
+
+  // Apply snap
+  newX = snapToGrid(newX);
+  newY = snapToGrid(newY);
 
   state.draggedFloatText.x = newX;
   state.draggedFloatText.y = newY;
@@ -720,6 +1067,7 @@ function undo() {
     state.chunks = prevState.chunks;
     state.floatingTexts = prevState.floatingTexts;
     state.annotations = prevState.annotations;
+    state.selectedChunks = [];
     rebuildChunks();
     rebuildFloatingTexts();
     render();
@@ -744,6 +1092,7 @@ function clearAll() {
   state.chunks = [];
   state.floatingTexts = [];
   state.annotations = [];
+  state.selectedChunks = [];
   chunksLayer.innerHTML = '';
   floatingTextsLayer.innerHTML = '';
   saveHistory();
@@ -982,7 +1331,7 @@ async function exportImage() {
       img.onload = resolve;
       img.src = chunk.imageData;
     });
-    exportCtx.drawImage(img, chunk.x, chunk.y);
+    exportCtx.drawImage(img, chunk.x, chunk.y, chunk.width, chunk.height);
   }
 
   // Draw floating text labels

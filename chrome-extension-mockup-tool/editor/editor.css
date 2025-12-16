@@ -92,6 +92,20 @@ body {
   box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
 }
 
+/* Small tool buttons (zoom) */
+.tool-btn.small {
+  min-width: 36px;
+  padding: 6px 8px;
+}
+
+.tool-btn.small span {
+  font-size: 14px;
+}
+
+.zoom-controls {
+  gap: 2px;
+}
+
 .divider {
   width: 1px;
   height: 32px;
@@ -233,8 +247,76 @@ select {
   justify-content: center;
 }
 
-.chunk:hover .chunk-delete {
+.chunk:hover .chunk-delete,
+.chunk:hover .chunk-duplicate {
   display: flex;
+}
+
+.chunk.selected {
+  border-color: #22c55e !important;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.4), 0 6px 20px rgba(34, 197, 94, 0.3);
+}
+
+.chunk.selected .resize-handle {
+  display: block;
+}
+
+/* Duplicate button on chunk */
+.chunk-duplicate {
+  position: absolute;
+  top: -10px;
+  left: -10px;
+  width: 20px;
+  height: 20px;
+  background: #3b82f6;
+  border: none;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+
+.chunk-duplicate:hover {
+  background: #2563eb;
+}
+
+/* Resize Handles */
+.resize-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: #22c55e;
+  border: 2px solid #fff;
+  border-radius: 2px;
+  display: none;
+  z-index: 10;
+}
+
+.resize-nw {
+  top: -6px;
+  left: -6px;
+  cursor: nw-resize;
+}
+
+.resize-ne {
+  top: -6px;
+  right: -6px;
+  cursor: ne-resize;
+}
+
+.resize-sw {
+  bottom: -6px;
+  left: -6px;
+  cursor: sw-resize;
+}
+
+.resize-se {
+  bottom: -6px;
+  right: -6px;
+  cursor: se-resize;
 }
 
 /* Floating Text Labels */

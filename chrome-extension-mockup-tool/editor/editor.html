@@ -57,6 +57,28 @@
           <input type="checkbox" id="smartFill" checked>
           <span>Smart Fill</span>
         </label>
+        <div class="divider"></div>
+        <label class="checkbox-label" title="Snap chunks to grid (G)">
+          <input type="checkbox" id="snapGrid" checked>
+          <span>Snap</span>
+        </label>
+        <select id="gridSize" title="Grid Size">
+          <option value="8">8px</option>
+          <option value="16" selected>16px</option>
+          <option value="32">32px</option>
+        </select>
+      </div>
+
+      <div class="toolbar-section zoom-controls">
+        <button id="zoomOut" class="tool-btn small" title="Zoom Out (Ctrl+-)">
+          <span>➖</span>
+        </button>
+        <button id="zoomReset" class="tool-btn small" title="Reset Zoom (Ctrl+0)">
+          <span>🔍</span>
+        </button>
+        <button id="zoomIn" class="tool-btn small" title="Zoom In (Ctrl++)">
+          <span>➕</span>
+        </button>
       </div>
 
       <div class="toolbar-section">
@@ -67,6 +89,10 @@
         <button id="clearChunks" class="tool-btn" title="Clear All">
           <span>🗑️</span>
           <span class="tool-label">Clear</span>
+        </button>
+        <button id="duplicateBtn" class="tool-btn" title="Duplicate Selected (Ctrl+D)">
+          <span>⧉</span>
+          <span class="tool-label">Dupe</span>
         </button>
         <div class="divider"></div>
         <button id="aiSuggestBtn" class="tool-btn ai-btn" title="Get AI Layout Suggestions">
@@ -174,12 +200,14 @@
         <ol>
           <li><strong>Select Tool (✂️):</strong> Draw rectangles to cut out UI chunks</li>
           <li><strong>Move Tool (✋):</strong> Drag chunks to rearrange them</li>
-          <li><strong>Float Text (🏷️):</strong> Add movable labels that stay on top</li>
+          <li><strong>Shift+Click:</strong> Multi-select chunks, move them together</li>
+          <li><strong>Resize:</strong> Drag corner handles to resize chunks</li>
+          <li><strong>Ctrl+D:</strong> Duplicate selected chunks</li>
+          <li><strong>Snap to Grid (G):</strong> Align chunks to 8/16/32px grid</li>
+          <li><strong>Ctrl+Mouse Wheel:</strong> Zoom in/out</li>
           <li><strong>AI (✨):</strong> Get smart layout suggestions from Gemini</li>
-          <li><strong>Mood Board (🎨):</strong> Upload reference images for style learning</li>
-          <li><strong>Export:</strong> Save your mockup as PNG</li>
         </ol>
-        <p class="tip">💡 <strong>Smart Fill:</strong> When enabled, cut areas fill with the background color instead of black!</p>
+        <p class="tip">💡 <strong>Smart Fill:</strong> Cut areas fill with the actual background color!</p>
       </div>
       <button id="closeModal" class="close-btn">Got it!</button>
     </div>
