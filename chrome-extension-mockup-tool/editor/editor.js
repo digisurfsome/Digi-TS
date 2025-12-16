@@ -332,9 +332,9 @@ function handleMouseMove(e) {
     const scaleX = canvasRect.width / canvas.width;
     const scaleY = canvasRect.height / canvas.height;
 
-    // Calculate position relative to container (not viewport)
-    const canvasOffsetX = canvasRect.left - containerRect.left;
-    const canvasOffsetY = canvasRect.top - containerRect.top;
+    // Calculate position relative to container (accounting for scroll)
+    const canvasOffsetX = canvasRect.left - containerRect.left + canvasContainer.scrollLeft;
+    const canvasOffsetY = canvasRect.top - containerRect.top + canvasContainer.scrollTop;
 
     const left = Math.min(state.startX, state.currentX) * scaleX + canvasOffsetX;
     const top = Math.min(state.startY, state.currentY) * scaleY + canvasOffsetY;
@@ -471,9 +471,9 @@ function createChunkElement(chunk) {
   const scaleX = canvasRect.width / canvas.width;
   const scaleY = canvasRect.height / canvas.height;
 
-  // Calculate canvas offset relative to container
-  const canvasOffsetX = canvasRect.left - containerRect.left;
-  const canvasOffsetY = canvasRect.top - containerRect.top;
+  // Calculate canvas offset relative to container (accounting for scroll)
+  const canvasOffsetX = canvasRect.left - containerRect.left + canvasContainer.scrollLeft;
+  const canvasOffsetY = canvasRect.top - containerRect.top + canvasContainer.scrollTop;
 
   const div = document.createElement('div');
   div.className = 'chunk' + (chunk.selected ? ' selected' : '');
@@ -613,9 +613,9 @@ function doResize(e) {
   const scaleX = canvasRect.width / canvas.width;
   const scaleY = canvasRect.height / canvas.height;
 
-  // Calculate canvas offset relative to container
-  const canvasOffsetX = canvasRect.left - containerRect.left;
-  const canvasOffsetY = canvasRect.top - containerRect.top;
+  // Calculate canvas offset relative to container (accounting for scroll)
+  const canvasOffsetX = canvasRect.left - containerRect.left + canvasContainer.scrollLeft;
+  const canvasOffsetY = canvasRect.top - containerRect.top + canvasContainer.scrollTop;
 
   const deltaX = (e.clientX - state.startX) / scaleX;
   const deltaY = (e.clientY - state.startY) / scaleY;
@@ -765,9 +765,9 @@ function dragChunk(e) {
   const scaleX = canvasRect.width / canvas.width;
   const scaleY = canvasRect.height / canvas.height;
 
-  // Calculate canvas offset relative to container
-  const canvasOffsetX = canvasRect.left - containerRect.left;
-  const canvasOffsetY = canvasRect.top - containerRect.top;
+  // Calculate canvas offset relative to container (accounting for scroll)
+  const canvasOffsetX = canvasRect.left - containerRect.left + canvasContainer.scrollLeft;
+  const canvasOffsetY = canvasRect.top - containerRect.top + canvasContainer.scrollTop;
 
   let newX = (e.clientX - state.dragOffsetX - canvasRect.left) / scaleX;
   let newY = (e.clientY - state.dragOffsetY - canvasRect.top) / scaleY;
@@ -843,9 +843,9 @@ function createFloatingTextElement(floatText) {
   const scaleX = canvasRect.width / canvas.width;
   const scaleY = canvasRect.height / canvas.height;
 
-  // Calculate canvas offset relative to container
-  const canvasOffsetX = canvasRect.left - containerRect.left;
-  const canvasOffsetY = canvasRect.top - containerRect.top;
+  // Calculate canvas offset relative to container (accounting for scroll)
+  const canvasOffsetX = canvasRect.left - containerRect.left + canvasContainer.scrollLeft;
+  const canvasOffsetY = canvasRect.top - containerRect.top + canvasContainer.scrollTop;
 
   const div = document.createElement('div');
   div.className = 'floating-text';
@@ -904,9 +904,9 @@ function dragFloatText(e) {
   const scaleX = canvasRect.width / canvas.width;
   const scaleY = canvasRect.height / canvas.height;
 
-  // Calculate canvas offset relative to container
-  const canvasOffsetX = canvasRect.left - containerRect.left;
-  const canvasOffsetY = canvasRect.top - containerRect.top;
+  // Calculate canvas offset relative to container (accounting for scroll)
+  const canvasOffsetX = canvasRect.left - containerRect.left + canvasContainer.scrollLeft;
+  const canvasOffsetY = canvasRect.top - containerRect.top + canvasContainer.scrollTop;
 
   let newX = (e.clientX - state.dragOffsetX - canvasRect.left) / scaleX;
   let newY = (e.clientY - state.dragOffsetY - canvasRect.top) / scaleY;
