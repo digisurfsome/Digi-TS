@@ -326,13 +326,18 @@ function handleMouseMove(e) {
   state.currentY = pos.y;
 
   if (state.tool === 'select') {
-    // Show selection box
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = rect.width / canvas.width;
-    const scaleY = rect.height / canvas.height;
+    // Show selection box - position relative to canvas container
+    const canvasRect = canvas.getBoundingClientRect();
+    const containerRect = canvasContainer.getBoundingClientRect();
+    const scaleX = canvasRect.width / canvas.width;
+    const scaleY = canvasRect.height / canvas.height;
 
-    const left = Math.min(state.startX, state.currentX) * scaleX + rect.left;
-    const top = Math.min(state.startY, state.currentY) * scaleY + rect.top;
+    // Calculate position relative to container (not viewport)
+    const canvasOffsetX = canvasRect.left - containerRect.left;
+    const canvasOffsetY = canvasRect.top - containerRect.top;
+
+    const left = Math.min(state.startX, state.currentX) * scaleX + canvasOffsetX;
+    const top = Math.min(state.startY, state.currentY) * scaleY + canvasOffsetY;
     const width = Math.abs(state.currentX - state.startX) * scaleX;
     const height = Math.abs(state.currentY - state.startY) * scaleY;
 
@@ -461,15 +466,20 @@ function createChunk() {
 }
 
 function createChunkElement(chunk) {
-  const rect = canvas.getBoundingClientRect();
-  const scaleX = rect.width / canvas.width;
-  const scaleY = rect.height / canvas.height;
+  const canvasRect = canvas.getBoundingClientRect();
+  const containerRect = canvasContainer.getBoundingClientRect();
+  const scaleX = canvasRect.width / canvas.width;
+  const scaleY = canvasRect.height / canvas.height;
+
+  // Calculate canvas offset relative to container
+  const canvasOffsetX = canvasRect.left - containerRect.left;
+  const canvasOffsetY = canvasRect.top - containerRect.top;
 
   const div = document.createElement('div');
   div.className = 'chunk' + (chunk.selected ? ' selected' : '');
   div.id = chunk.id;
-  div.style.left = (chunk.x * scaleX + rect.left) + 'px';
-  div.style.top = (chunk.y * scaleY + rect.top) + 'px';
+  div.style.left = (chunk.x * scaleX + canvasOffsetX) + 'px';
+  div.style.top = (chunk.y * scaleY + canvasOffsetY) + 'px';
   div.style.width = (chunk.width * scaleX) + 'px';
   div.style.height = (chunk.height * scaleY) + 'px';
 
@@ -598,9 +608,14 @@ function startResize(e, chunk, handle) {
 function doResize(e) {
   if (!state.isResizing || !state.resizeChunk) return;
 
-  const rect = canvas.getBoundingClientRect();
-  const scaleX = rect.width / canvas.width;
-  const scaleY = rect.height / canvas.height;
+  const canvasRect = canvas.getBoundingClientRect();
+  const containerRect = canvasContainer.getBoundingClientRect();
+  const scaleX = canvasRect.width / canvas.width;
+  const scaleY = canvasRect.height / canvas.height;
+
+  // Calculate canvas offset relative to container
+  const canvasOffsetX = canvasRect.left - containerRect.left;
+  const canvasOffsetY = canvasRect.top - containerRect.top;
 
   const deltaX = (e.clientX - state.startX) / scaleX;
   const deltaY = (e.clientY - state.startY) / scaleY;
@@ -640,8 +655,8 @@ function doResize(e) {
 
   // Update chunk visually
   const div = document.getElementById(chunk.id);
-  div.style.left = (newX * scaleX + rect.left) + 'px';
-  div.style.top = (newY * scaleY + rect.top) + 'px';
+  div.style.left = (newX * scaleX + canvasOffsetX) + 'px';
+  div.style.top = (newY * scaleY + canvasOffsetY) + 'px';
   div.style.width = (newWidth * scaleX) + 'px';
   div.style.height = (newHeight * scaleY) + 'px';
 
@@ -714,13 +729,13 @@ function startDragChunk(e, chunk) {
   const div = document.getElementById(chunk.id);
   div.classList.add('dragging');
 
-  const rect = canvas.getBoundingClientRect();
-  const scaleX = rect.width / canvas.width;
-  const scaleY = rect.height / canvas.height;
+  const canvasRect = canvas.getBoundingClientRect();
+  const scaleX = canvasRect.width / canvas.width;
+  const scaleY = canvasRect.height / canvas.height;
 
   state.draggedChunk = chunk;
-  state.dragOffsetX = e.clientX - (chunk.x * scaleX + rect.left);
-  state.dragOffsetY = e.clientY - (chunk.y * scaleY + rect.top);
+  state.dragOffsetX = e.clientX - (chunk.x * scaleX + canvasRect.left);
+  state.dragOffsetY = e.clientY - (chunk.y * scaleY + canvasRect.top);
 
   // Store initial positions for all selected chunks
   state.selectedChunks.forEach(id => {
@@ -745,12 +760,17 @@ function startDragChunk(e, chunk) {
 function dragChunk(e) {
   if (!state.draggedChunk) return;
 
-  const rect = canvas.getBoundingClientRect();
-  const scaleX = rect.width / canvas.width;
-  const scaleY = rect.height / canvas.height;
+  const canvasRect = canvas.getBoundingClientRect();
+  const containerRect = canvasContainer.getBoundingClientRect();
+  const scaleX = canvasRect.width / canvas.width;
+  const scaleY = canvasRect.height / canvas.height;
 
-  let newX = (e.clientX - state.dragOffsetX - rect.left) / scaleX;
-  let newY = (e.clientY - state.dragOffsetY - rect.top) / scaleY;
+  // Calculate canvas offset relative to container
+  const canvasOffsetX = canvasRect.left - containerRect.left;
+  const canvasOffsetY = canvasRect.top - containerRect.top;
+
+  let newX = (e.clientX - state.dragOffsetX - canvasRect.left) / scaleX;
+  let newY = (e.clientY - state.dragOffsetY - canvasRect.top) / scaleY;
 
   // Apply snap to grid
   newX = snapToGrid(newX);
@@ -767,8 +787,8 @@ function dragChunk(e) {
       chunk.y = snapToGrid(chunk._dragStartY + deltaY);
 
       const div = document.getElementById(chunk.id);
-      div.style.left = (chunk.x * scaleX + rect.left) + 'px';
-      div.style.top = (chunk.y * scaleY + rect.top) + 'px';
+      div.style.left = (chunk.x * scaleX + canvasOffsetX) + 'px';
+      div.style.top = (chunk.y * scaleY + canvasOffsetY) + 'px';
     }
   });
 
@@ -818,16 +838,21 @@ function createFloatingText(text, canvasX, canvasY) {
 }
 
 function createFloatingTextElement(floatText) {
-  const rect = canvas.getBoundingClientRect();
-  const scaleX = rect.width / canvas.width;
-  const scaleY = rect.height / canvas.height;
+  const canvasRect = canvas.getBoundingClientRect();
+  const containerRect = canvasContainer.getBoundingClientRect();
+  const scaleX = canvasRect.width / canvas.width;
+  const scaleY = canvasRect.height / canvas.height;
+
+  // Calculate canvas offset relative to container
+  const canvasOffsetX = canvasRect.left - containerRect.left;
+  const canvasOffsetY = canvasRect.top - containerRect.top;
 
   const div = document.createElement('div');
   div.className = 'floating-text';
   div.id = floatText.id;
   div.textContent = floatText.text;
-  div.style.left = (floatText.x * scaleX + rect.left) + 'px';
-  div.style.top = (floatText.y * scaleY + rect.top) + 'px';
+  div.style.left = (floatText.x * scaleX + canvasOffsetX) + 'px';
+  div.style.top = (floatText.y * scaleY + canvasOffsetY) + 'px';
   div.style.borderColor = floatText.color;
   div.style.color = floatText.color;
 
@@ -852,13 +877,13 @@ function startDragFloatText(e, floatText) {
   const div = document.getElementById(floatText.id);
   div.classList.add('dragging');
 
-  const rect = canvas.getBoundingClientRect();
-  const scaleX = rect.width / canvas.width;
-  const scaleY = rect.height / canvas.height;
+  const canvasRect = canvas.getBoundingClientRect();
+  const scaleX = canvasRect.width / canvas.width;
+  const scaleY = canvasRect.height / canvas.height;
 
   state.draggedFloatText = floatText;
-  state.dragOffsetX = e.clientX - (floatText.x * scaleX + rect.left);
-  state.dragOffsetY = e.clientY - (floatText.y * scaleY + rect.top);
+  state.dragOffsetX = e.clientX - (floatText.x * scaleX + canvasRect.left);
+  state.dragOffsetY = e.clientY - (floatText.y * scaleY + canvasRect.top);
 
   const moveHandler = (e) => dragFloatText(e);
   const upHandler = () => {
@@ -874,12 +899,17 @@ function startDragFloatText(e, floatText) {
 function dragFloatText(e) {
   if (!state.draggedFloatText) return;
 
-  const rect = canvas.getBoundingClientRect();
-  const scaleX = rect.width / canvas.width;
-  const scaleY = rect.height / canvas.height;
+  const canvasRect = canvas.getBoundingClientRect();
+  const containerRect = canvasContainer.getBoundingClientRect();
+  const scaleX = canvasRect.width / canvas.width;
+  const scaleY = canvasRect.height / canvas.height;
 
-  let newX = (e.clientX - state.dragOffsetX - rect.left) / scaleX;
-  let newY = (e.clientY - state.dragOffsetY - rect.top) / scaleY;
+  // Calculate canvas offset relative to container
+  const canvasOffsetX = canvasRect.left - containerRect.left;
+  const canvasOffsetY = canvasRect.top - containerRect.top;
+
+  let newX = (e.clientX - state.dragOffsetX - canvasRect.left) / scaleX;
+  let newY = (e.clientY - state.dragOffsetY - canvasRect.top) / scaleY;
 
   // Apply snap
   newX = snapToGrid(newX);
@@ -889,8 +919,8 @@ function dragFloatText(e) {
   state.draggedFloatText.y = newY;
 
   const div = document.getElementById(state.draggedFloatText.id);
-  div.style.left = (newX * scaleX + rect.left) + 'px';
-  div.style.top = (newY * scaleY + rect.top) + 'px';
+  div.style.left = (newX * scaleX + canvasOffsetX) + 'px';
+  div.style.top = (newY * scaleY + canvasOffsetY) + 'px';
 }
 
 function endDragFloatText() {
