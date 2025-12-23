@@ -486,6 +486,39 @@ def main():
                 except Exception:
                     pass
 
+    # TOP LINE: New Session | Project | Ready | Cockpit - all tight
+    c1, c2, c3, c4 = st.columns([1, 1.5, 0.8, 1])
+    with c1:
+        if st.button("🆕 New", use_container_width=True):
+            # Create new session
+            if st.session_state.get("current_project_id") and "current_user" in locals() and current_user:
+                with get_db() as db:
+                    from datetime import datetime
+                    from app.core.models import ChatSession, SessionStatus
+                    new_session = ChatSession(
+                        user_id=current_user.id,
+                        project_id=st.session_state.current_project_id,
+                        title=f"Session {datetime.now().strftime('%H:%M')}",
+                        session_type="general", is_active=True,
+                        status=SessionStatus.ACTIVE,
+                        total_prompt_tokens=0, total_completion_tokens=0, total_tokens_used=0
+                    )
+                    db.add(new_session)
+                    db.commit()
+                    db.refresh(new_session)
+                    st.session_state.current_chat_session_id = new_session.id
+                    st.rerun()
+    with c2:
+        project_name = st.session_state.get("current_project_name", "No Project")
+        st.markdown(f"📁 **{project_name}**")
+    with c3:
+        if is_ready:
+            st.markdown("✅ Ready")
+        else:
+            st.markdown("⏳")
+    with c4:
+        render_cockpit_mode_toggle()
+
     # Main content area with columns (chat on left, tabs on right)
     chat_col, main_col = st.columns([1, 2])
 
@@ -494,51 +527,17 @@ def main():
         if st.session_state.get("current_project_id") and "current_user" in locals() and current_user:
             with get_db() as db:
                 from app.services import get_project_by_id
-                from app.services.session_service import record_activity_ping
-
                 project = get_project_by_id(db, st.session_state.current_project_id)
                 if project:
-                    # Phase 5: Show warmup modal if needed (before anything else)
-                    warmup_key = f"warmup_shown_{project.id}"
-                    if not st.session_state.get(warmup_key, False):
-                        warmup_dismissed = render_warmup_modal(db, project.id, current_user.id)
-                        if warmup_dismissed:
-                            st.session_state[warmup_key] = True
-                            st.rerun()
-                        else:
-                            # Still showing warmup, don't render anything else
-                            st.stop()
-
-                    # Phase 5: Compact inline context refresh (non-blocking)
-                    render_inline_context_refresh(db, project, current_user.id)
-
-                    # Record activity ping
-                    record_activity_ping(db, current_user.id, project.id)
-
-                    # Render the main chat panel (no extra status bar needed)
                     render_chat_panel(db, current_user.id, project)
                 else:
-                    st.warning("⚠️ Project not found. Select one from sidebar.")
+                    st.warning("⚠️ Project not found")
         else:
-            st.info("📁 Select a project from the sidebar to start.")
+            st.info("📁 Select project from sidebar")
 
     # Right column: Tabs
     with main_col:
-        # Check for Cockpit Mode
         cockpit_active = is_cockpit_mode_active()
-
-        # Status line: Project | Ready | Cockpit - all on one tight line above tabs
-        proj_col, ready_col, cockpit_col = st.columns([2, 1, 1])
-        with proj_col:
-            project_name = st.session_state.get("current_project_name", "No Project")
-            st.markdown(f"📁 **{project_name}**")
-        with ready_col:
-            if is_ready:
-                st.markdown("✅ Ready")
-            else:
-                st.markdown("⏳ Warmup")
-        with cockpit_col:
-            render_cockpit_mode_toggle()
 
         # If Cockpit Mode is active, show the dashboard instead of tabs
         if cockpit_active and st.session_state.get("current_project_id"):

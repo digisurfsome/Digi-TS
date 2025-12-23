@@ -1246,21 +1246,8 @@ def render_chat_panel(
     project: Project
 ) -> None:
     """
-    Render chat panel with message history and input.
-
-    Args:
-        db: Database session
-        user_id: Current user ID
-        project: Current project
+    Render ultra-compact chat panel: input first, messages below.
     """
-    # No header - user knows it's a chat
-
-    # Check for warmed pending sessions
-    warmed_sessions = get_warmed_sessions(db, user_id, project.id)
-    if warmed_sessions and "baton_notification_shown" not in st.session_state:
-        st.success(f"🎯 Warmed session ready!")
-        st.session_state.baton_notification_shown = True
-
     # Get or create chat session
     if "current_chat_session_id" in st.session_state:
         from app.core.models import ChatSession
@@ -1276,214 +1263,70 @@ def render_chat_panel(
         chat_session = get_or_create_chat_session(db, user_id, project.id)
         st.session_state.current_chat_session_id = chat_session.id
 
-    new_session_clicked = st.button("🆕 New Session", help="Start fresh", use_container_width=True)
-
-    # =========================================================================
-    # AGENT OS FLASH LABELS - Visible during chat (Phase 2A)
-    # =========================================================================
-    # Show compact flash labels if Agent OS doc exists
-    if "agent_os_doc" in st.session_state:
-        render_compact_flash_labels()
-
-    # =========================================================================
-    # VOICE RECORDING INDICATOR (Phase 2B)
-    # =========================================================================
-    # Show voice recording status if active
-    if is_voice_recording_active():
-        render_voice_recording_indicator()
-
-    if new_session_clicked:
-        try:
-            from datetime import datetime
-            from app.core.models import ChatSession, SessionStatus
-
-            # Create new clean session
-            new_session = ChatSession(
-                user_id=user_id,
-                project_id=project.id,
-                title=f"Session - {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-                description="Clean session without baton",
-                session_type="general",
-                is_active=True,
-                status=SessionStatus.ACTIVE,
-                total_prompt_tokens=0,
-                total_completion_tokens=0,
-                total_tokens_used=0
-            )
-            db.add(new_session)
-
-            # Deactivate old session
-            chat_session.is_active = False
-
-            db.commit()
-            db.refresh(new_session)
-
-            # Update session state
-            st.session_state.current_chat_session_id = new_session.id
-            show_success("New clean session started!")
-            st.rerun()
-        except Exception as e:
-            show_error(f"Failed to create new session: {str(e)}")
-
-    st.divider()
-
-    # Session switcher
-    if warmed_sessions:
-        with st.expander("🔄 Switch to Warmed Session", expanded=False):
-            for warmed in warmed_sessions:
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    st.markdown(f"**{warmed.title}**")
-                    st.caption(f"Created: {warmed.created_at.strftime('%Y-%m-%d %H:%M')}")
-                with col2:
-                    if st.button("Switch", key=f"switch_{warmed.id}"):
-                        switch_to_session(db, chat_session.id, warmed.id)
-                        st.session_state.current_chat_session_id = warmed.id
-                        st.session_state.baton_notification_shown = False
-                        show_success("Switched to warmed session!")
-                        st.rerun()
-
     # Get settings
     settings = get_all_settings(db)
-    max_tokens = int(settings.get("max_context_tokens", "8000"))
     chat_model = settings.get("DEFAULT_CHAT_MODEL", "gpt-4-turbo-preview")
     openai_key = settings.get("OPENAI_API_KEY", "")
 
-    # Token meter
-    render_token_meter(db, chat_session.id, max_tokens)
-
-    st.divider()
-
-    # Chat history - compact, no headers
-    show_warmup = st.checkbox("Show warm-up", value=False, key="show_warmup_toggle")
-
-    messages = get_chat_history(db, chat_session.id)
-
-    # Display messages
-    chat_container = st.container()
-
-    with chat_container:
-        if messages:
-            for msg in messages:
-                # Filter warm-up messages based on toggle
-                if msg.is_warmup and not show_warmup:
-                    continue
-
-                # Skip system messages unless showing warmup
-                if msg.role.value == "system":
-                    if show_warmup:
-                        with st.chat_message("assistant", avatar="📋"):
-                            st.markdown(f"*System: {msg.content[:200]}...*" if len(msg.content) > 200 else f"*System: {msg.content}*")
-                    continue
-
-                # Add warm-up indicator
-                warmup_indicator = " 🔥" if msg.is_warmup else ""
-
-                if msg.role.value == "user":
-                    with st.chat_message("user"):
-                        st.markdown(msg.content + warmup_indicator)
-                elif msg.role.value == "assistant":
-                    with st.chat_message("assistant"):
-                        st.markdown(msg.content + warmup_indicator)
-
-    st.divider()
-
-    # Input area - use text_area for larger input
+    # INPUT FIRST - right at top
     user_input = st.text_area(
         "Message",
         key="chat_input",
         placeholder="Type your message...",
         label_visibility="collapsed",
-        height=100
+        height=80
     )
 
-    col1, col2, col3 = st.columns([1, 1, 2])
-
+    col1, col2, col3 = st.columns([1, 1, 1])
     with col1:
         send_button = st.button("📤 Send", type="primary", use_container_width=True)
-
     with col2:
-        if st.button("🗑️ Clear", help="Clear chat history"):
-            clear_chat_history(db, chat_session.id)
-            st.rerun()
-
+        clear_button = st.button("🗑️ Clear", use_container_width=True)
     with col3:
-        baton_button = st.button("🎯 Baton Now", help="Create a new warmed session with project snapshot")
+        baton_button = st.button("🎯 Baton", use_container_width=True)
 
-    # Manual baton creation
+    # Handle clear
+    if clear_button:
+        clear_chat_history(db, chat_session.id)
+        st.rerun()
+
+    # Handle baton
     if baton_button:
-        with st.spinner("Creating baton snapshot and warming new session..."):
-            try:
-                baton, new_session = generate_baton(
-                    db=db,
-                    user_id=user_id,
-                    project_id=project.id,
-                    from_session_id=chat_session.id,
-                    settings=settings,
-                    run_warmup=True
-                )
-                show_success(f"Baton created! New warmed session: {new_session.title}")
-                st.session_state.baton_notification_shown = False
-                st.rerun()
-            except Exception as e:
-                show_error(f"Failed to create baton: {str(e)}")
+        try:
+            baton, new_session = generate_baton(
+                db=db, user_id=user_id, project_id=project.id,
+                from_session_id=chat_session.id, settings=settings, run_warmup=True
+            )
+            show_success("Baton created!")
+            st.rerun()
+        except Exception as e:
+            show_error(f"Baton failed: {str(e)}")
 
-    # Send message
+    # Handle send
     if send_button and user_input and user_input.strip():
         with st.spinner("Thinking..."):
             try:
                 user_msg, assistant_msg = send_chat_message(
-                    db,
-                    project.id,
-                    chat_session.id,
-                    user_input.strip(),
+                    db, project.id, chat_session.id, user_input.strip(),
                     openai_api_key=openai_key if openai_key else None,
                     chat_model=chat_model
                 )
-
-                # Auto-detect potential nodes from this exchange
-                if openai_key or settings.get("OPENAI_API_KEY"):
-                    api_key_for_detection = openai_key or settings.get("OPENAI_API_KEY")
-                    detected = detect_nodes_from_exchange(
-                        user_message=user_input.strip(),
-                        assistant_message=assistant_msg.content,
-                        openai_api_key=api_key_for_detection,
-                        model=settings.get("DEFAULT_SUMMARY_MODEL", "gpt-4-turbo-preview")
-                    )
-                    if detected:
-                        # Store detected nodes in session state for UI display
-                        st.session_state.detected_nodes = detected
-                        st.session_state.detected_nodes_project_id = project.id
-
-                # Check for auto-baton trigger
-                if check_auto_baton_trigger(db, chat_session.id, settings):
-                    show_info("Token threshold reached! Creating auto-baton...")
-                    try:
-                        auto_baton, auto_session = generate_baton(
-                            db=db,
-                            user_id=user_id,
-                            project_id=project.id,
-                            from_session_id=chat_session.id,
-                            settings=settings,
-                            run_warmup=True
-                        )
-                        # Update baton type to auto
-                        auto_baton.snapshot_type = "auto"
-                        db.commit()
-
-                        st.session_state.baton_notification_shown = False
-                        show_success("Auto-baton created! A new warmed session is ready.")
-                    except Exception as e:
-                        show_warning(f"Auto-baton creation failed: {str(e)}")
-
                 st.rerun()
             except Exception as e:
                 show_error(f"Chat error: {str(e)}")
-    elif send_button and not user_input.strip():
-        show_warning("Please enter a message")
 
-    # Display detected node suggestions
-    _render_detected_nodes_ui(db, project.id)
+    # Messages below input
+    messages = get_chat_history(db, chat_session.id)
+    if messages:
+        for msg in messages:
+            if msg.role.value == "system":
+                continue
+            if msg.role.value == "user":
+                with st.chat_message("user"):
+                    st.markdown(msg.content)
+            elif msg.role.value == "assistant":
+                with st.chat_message("assistant"):
+                    st.markdown(msg.content)
 
 
 def _render_detected_nodes_ui(db: Session, project_id: int) -> None:
