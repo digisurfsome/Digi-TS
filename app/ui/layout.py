@@ -695,6 +695,10 @@ def render_create_project_form(db: Session, user: UserProfile) -> Optional[Proje
                     description=description.strip() if description else None
                 )
                 show_success(f"Project '{project.name}' created successfully!")
+                # Set session state BEFORE rerun so the project loads after refresh
+                st.session_state.show_create_project = False
+                st.session_state.current_project_id = project.id
+                st.session_state.current_project_name = project.name
                 st.session_state.selected_project_name = project.name
                 st.rerun()
             except Exception as e:
@@ -702,6 +706,7 @@ def render_create_project_form(db: Session, user: UserProfile) -> Optional[Proje
                 return None
 
         if cancel:
+            st.session_state.show_create_project = False
             st.rerun()
 
     return None
@@ -717,50 +722,84 @@ def render_settings_ui(db: Session, user_id: Optional[int] = None) -> None:
         db: Database session
         user_id: User ID for user-specific settings (None for global)
     """
+    import os
+    from app.services.settings_service import (
+        OPENAI_MODELS, ANTHROPIC_MODELS, GEMINI_MODELS, ALL_CHAT_MODELS
+    )
+
     st.subheader("⚙️ Settings")
     st.markdown("Configure application and AI model settings.")
 
     # Load current settings
     current_settings = get_all_settings(db, user_id)
 
+    # Auto-fill from environment if settings are empty
+    env_openai = os.environ.get("OPENAI_API_KEY", "")
+    env_anthropic = os.environ.get("ANTHROPIC_API_KEY", "")
+    env_google = os.environ.get("GEMINI_API_KEY", "") or os.environ.get("GOOGLE_API_KEY", "")
+
     with st.form("settings_form"):
         st.markdown("### API Configuration")
 
+        # Show status of environment variables
+        env_status = []
+        if env_openai:
+            env_status.append("✅ OpenAI")
+        if env_anthropic:
+            env_status.append("✅ Anthropic")
+        if env_google:
+            env_status.append("✅ Gemini")
+        if env_status:
+            st.success(f"API Keys detected from environment: {', '.join(env_status)}")
+        else:
+            st.info("No API keys found in environment. Enter them below or add to Railway variables.")
+
         openai_key = st.text_input(
             "OpenAI API Key (optional, uses env if blank)",
-            value=current_settings.get("OPENAI_API_KEY", ""),
+            value=current_settings.get("OPENAI_API_KEY", "") or env_openai,
             type="password",
             help="Leave blank to use OPENAI_API_KEY from environment"
         )
 
         anthropic_key = st.text_input(
             "Anthropic API Key (for Claude models)",
-            value=current_settings.get("ANTHROPIC_API_KEY", ""),
+            value=current_settings.get("ANTHROPIC_API_KEY", "") or env_anthropic,
             type="password",
             help="Required for Roundtable Coder with Claude models"
         )
 
         google_key = st.text_input(
             "Google API Key (for Gemini models)",
-            value=current_settings.get("GOOGLE_API_KEY", ""),
+            value=current_settings.get("GOOGLE_API_KEY", "") or env_google,
             type="password",
             help="Required for Roundtable Coder with Gemini models"
         )
 
+        st.markdown("### Model Selection")
+
         col1, col2 = st.columns(2)
         with col1:
-            chat_model = st.text_input(
+            current_chat = current_settings.get("DEFAULT_CHAT_MODEL", "gpt-4.1")
+            # Ensure current model is in the list
+            chat_options = list(ALL_CHAT_MODELS) if current_chat in ALL_CHAT_MODELS else [current_chat] + list(ALL_CHAT_MODELS)
+            chat_model = st.selectbox(
                 "Default Chat Model",
-                value=current_settings.get("DEFAULT_CHAT_MODEL", "gpt-4-turbo-preview"),
-                help="OpenAI model for chat interactions"
+                options=chat_options,
+                index=chat_options.index(current_chat) if current_chat in chat_options else 0,
+                help="Model for chat interactions"
             )
 
         with col2:
-            summary_model = st.text_input(
+            current_summary = current_settings.get("DEFAULT_SUMMARY_MODEL", "gpt-4.1-mini")
+            summary_options = list(ALL_CHAT_MODELS) if current_summary in ALL_CHAT_MODELS else [current_summary] + list(ALL_CHAT_MODELS)
+            summary_model = st.selectbox(
                 "Default Summary Model",
-                value=current_settings.get("DEFAULT_SUMMARY_MODEL", "gpt-4-turbo-preview"),
-                help="OpenAI model for generating summaries"
+                options=summary_options,
+                index=summary_options.index(current_summary) if current_summary in summary_options else 0,
+                help="Model for generating summaries"
             )
+
+        st.caption("**Available Models:** OpenAI (GPT-5.x, GPT-4.1, GPT-4o), Anthropic (Claude 4.5, Claude 4), Google (Gemini 3, Gemini 2.5)")
 
         st.markdown("### Context & Baton Settings")
 
