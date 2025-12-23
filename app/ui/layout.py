@@ -43,60 +43,66 @@ from app.core.models import NodeType, NodeStatus
 def inject_compact_css() -> None:
     """
     Inject CSS to create a compact, space-efficient layout.
-    Reduces Streamlit's default padding and margins.
+    Removes all wasted space - everything tight to top.
     """
     st.markdown("""
     <style>
-    /* Reduce main container padding */
+    /* ZERO top padding - everything tight to top */
     .main .block-container {
-        padding-top: 1rem !important;
-        padding-bottom: 1rem !important;
+        padding-top: 0 !important;
+        padding-bottom: 0.5rem !important;
         max-width: 100% !important;
     }
 
-    /* Reduce header padding */
+    /* Hide Streamlit header completely */
     header[data-testid="stHeader"] {
-        height: 2.5rem !important;
+        display: none !important;
     }
 
     /* Tighter tab styling */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 4px;
+        gap: 2px;
         padding: 0;
+        margin-top: 0 !important;
     }
     .stTabs [data-baseweb="tab"] {
-        padding: 8px 12px !important;
-        font-size: 13px !important;
+        padding: 6px 10px !important;
+        font-size: 12px !important;
     }
 
-    /* Reduce spacing in columns */
+    /* Minimal column spacing */
     [data-testid="column"] {
-        padding: 0 8px !important;
+        padding: 0 4px !important;
     }
 
     /* Compact sidebar */
     [data-testid="stSidebar"] {
-        min-width: 200px !important;
-        max-width: 250px !important;
+        min-width: 180px !important;
+        max-width: 220px !important;
     }
     [data-testid="stSidebar"] .block-container {
-        padding: 1rem 0.5rem !important;
+        padding: 0.5rem !important;
     }
 
-    /* Reduce vertical spacing between elements */
+    /* Minimal vertical spacing */
     .element-container {
-        margin-bottom: 0.5rem !important;
+        margin-bottom: 0.25rem !important;
     }
 
     /* Compact expander */
     .streamlit-expanderHeader {
-        padding: 0.5rem !important;
-        font-size: 14px !important;
+        padding: 0.25rem !important;
+        font-size: 13px !important;
     }
 
     /* Tighter form elements */
     .stTextInput, .stSelectbox, .stTextArea {
-        margin-bottom: 0.5rem !important;
+        margin-bottom: 0.25rem !important;
+    }
+
+    /* Remove markdown paragraph margins */
+    .stMarkdown p {
+        margin-bottom: 0.25rem !important;
     }
 
     /* Compact status bar */
@@ -1207,17 +1213,12 @@ def render_chat_panel(
         user_id: Current user ID
         project: Current project
     """
-    # Header row: AI Chat title + Project name on same line
-    header_col, project_col = st.columns([1, 1])
-    with header_col:
-        st.markdown("### 💬 AI Chat")
-    with project_col:
-        st.markdown(f"📁 **{project.name}**")
+    # No header - user knows it's a chat
 
     # Check for warmed pending sessions
     warmed_sessions = get_warmed_sessions(db, user_id, project.id)
     if warmed_sessions and "baton_notification_shown" not in st.session_state:
-        st.success(f"🎯 New warmed session ready! ({len(warmed_sessions)} available)")
+        st.success(f"🎯 Warmed session ready!")
         st.session_state.baton_notification_shown = True
 
     # Get or create chat session
@@ -1235,12 +1236,7 @@ def render_chat_panel(
         chat_session = get_or_create_chat_session(db, user_id, project.id)
         st.session_state.current_chat_session_id = chat_session.id
 
-    # Session info row
-    session_col, new_col = st.columns([3, 1])
-    with session_col:
-        st.caption(f"Session: {chat_session.title}")
-    with new_col:
-        new_session_clicked = st.button("🆕 New", help="Start a new clean session", use_container_width=True)
+    new_session_clicked = st.button("🆕 New Session", help="Start fresh", use_container_width=True)
 
     # =========================================================================
     # AGENT OS FLASH LABELS - Visible during chat (Phase 2A)
@@ -1318,22 +1314,16 @@ def render_chat_panel(
 
     st.divider()
 
-    # Chat history with warm-up toggle
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.markdown("#### Conversation")
-    with col2:
-        show_warmup = st.checkbox("Show warm-up", value=False, key="show_warmup_toggle")
+    # Chat history - compact, no headers
+    show_warmup = st.checkbox("Show warm-up", value=False, key="show_warmup_toggle")
 
     messages = get_chat_history(db, chat_session.id)
 
-    # Display messages in a container with scrolling
+    # Display messages
     chat_container = st.container()
 
     with chat_container:
-        if not messages:
-            st.info("Start a conversation by typing a message below.")
-        else:
+        if messages:
             for msg in messages:
                 # Filter warm-up messages based on toggle
                 if msg.is_warmup and not show_warmup:
