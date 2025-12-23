@@ -26,9 +26,11 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy application code
 COPY . .
 
+# Make startup script executable
+RUN chmod +x start.sh
+
 # Expose port (Railway sets $PORT)
 EXPOSE 8501
 
-# Run the application
-# Railway will set $PORT at runtime
-CMD streamlit run app/streamlit_app.py --server.port=${PORT:-8501} --server.address=0.0.0.0 --server.headless=true
+# Run the startup script (handles PORT properly)
+CMD ["./start.sh"]
