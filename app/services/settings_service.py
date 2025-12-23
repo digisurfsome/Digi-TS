@@ -11,12 +11,71 @@ from sqlalchemy import and_
 from app.core.models import Settings
 
 
+# Available AI models for dropdowns (updated Dec 2025)
+OPENAI_MODELS = [
+    # GPT-5 Series (Latest)
+    "gpt-5.2",
+    "gpt-5.1",
+    # GPT-4.1 Series
+    "gpt-4.1",
+    "gpt-4.1-mini",
+    "gpt-4.1-nano",
+    # GPT-4o Series
+    "gpt-4o",
+    "gpt-4o-mini",
+    # Reasoning Models
+    "o4-mini",
+    "o1",
+    "o1-mini",
+    # Legacy (still available)
+    "gpt-4-turbo-preview",
+    "gpt-4-turbo",
+    "gpt-4",
+    "gpt-3.5-turbo",
+]
+
+ANTHROPIC_MODELS = [
+    # Claude 4.5 Series (Latest)
+    "claude-opus-4-5-20251101",
+    "claude-sonnet-4-5-20250929",
+    # Claude 4 Series
+    "claude-opus-4-1-20250805",
+    "claude-sonnet-4-20250514",
+    # Claude 3.5 (Legacy but still good)
+    "claude-3-5-sonnet-20241022",
+    "claude-3-5-haiku-20241022",
+    # Aliases (auto-update to latest)
+    "claude-sonnet-4",
+    "claude-opus-4",
+]
+
+GEMINI_MODELS = [
+    # Gemini 3 Series (Latest)
+    "gemini-3-pro",
+    "gemini-3-deep-think",
+    # Gemini 2.5 Series
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    # Gemini 2.0 Series
+    "gemini-2.0-flash",
+    "gemini-2.0-pro",
+    # Legacy
+    "gemini-1.5-pro",
+    "gemini-1.5-flash",
+]
+
+# All models combined for general selection
+ALL_CHAT_MODELS = OPENAI_MODELS + ANTHROPIC_MODELS + GEMINI_MODELS
+
 # Default setting values
 DEFAULT_SETTINGS = {
     "OPENAI_API_KEY": "",
-    "DEFAULT_CHAT_MODEL": "gpt-4-turbo-preview",
-    "DEFAULT_SUMMARY_MODEL": "gpt-4-turbo-preview",
-    "max_context_tokens": "8000",
+    "ANTHROPIC_API_KEY": "",
+    "GOOGLE_API_KEY": "",
+    "DEFAULT_CHAT_MODEL": "gpt-4.1",
+    "DEFAULT_SUMMARY_MODEL": "gpt-4.1-mini",
+    "max_context_tokens": "128000",
     "auto_baton_threshold_percent": "80",
     "auto_warmup_enabled": "true",
     "warmup_prompt_1": "Review the project context and understand the design system.",
