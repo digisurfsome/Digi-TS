@@ -47,16 +47,45 @@ def inject_compact_css() -> None:
     """
     st.markdown("""
     <style>
-    /* ZERO top padding - everything tight to top */
+    /* AGGRESSIVE: Remove ALL top space */
     .main .block-container {
         padding-top: 0 !important;
-        padding-bottom: 0.5rem !important;
+        padding-bottom: 0 !important;
+        margin-top: 0 !important;
         max-width: 100% !important;
     }
 
-    /* Hide Streamlit header completely */
+    /* Hide ALL Streamlit chrome */
     header[data-testid="stHeader"] {
         display: none !important;
+    }
+    #MainMenu {display: none !important;}
+    footer {display: none !important;}
+    .stDeployButton {display: none !important;}
+
+    /* Remove top margin from first elements */
+    .main > div:first-child {
+        margin-top: 0 !important;
+        padding-top: 0 !important;
+    }
+
+    /* Target the app view container */
+    .appview-container {
+        margin-top: 0 !important;
+        padding-top: 0 !important;
+    }
+
+    section[data-testid="stSidebar"] {
+        top: 0 !important;
+    }
+
+    .stApp {
+        margin-top: 0 !important;
+    }
+
+    /* Remove iframe padding if embedded */
+    .stApp > header + div {
+        padding-top: 0 !important;
     }
 
     /* Tighter tab styling */
@@ -79,9 +108,14 @@ def inject_compact_css() -> None:
     [data-testid="stSidebar"] {
         min-width: 180px !important;
         max-width: 220px !important;
+        padding-top: 0 !important;
     }
     [data-testid="stSidebar"] .block-container {
         padding: 0.5rem !important;
+        padding-top: 0 !important;
+    }
+    [data-testid="stSidebar"] > div:first-child {
+        padding-top: 0 !important;
     }
 
     /* Minimal vertical spacing */
@@ -103,6 +137,12 @@ def inject_compact_css() -> None:
     /* Remove markdown paragraph margins */
     .stMarkdown p {
         margin-bottom: 0.25rem !important;
+    }
+
+    /* Kill any remaining top gaps */
+    div[data-testid="stVerticalBlock"] > div:first-child {
+        margin-top: 0 !important;
+        padding-top: 0 !important;
     }
 
     /* Compact status bar */
