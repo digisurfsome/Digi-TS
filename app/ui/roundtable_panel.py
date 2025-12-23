@@ -68,15 +68,12 @@ def render_roundtable_panel(db: Session, project_id: Optional[int] = None):
         db: Database session
         project_id: Optional project ID to filter sessions
     """
-    st.markdown("### 🔄 Roundtable Coder")
+    import os
 
-    # Get API keys from settings
-    anthropic_key = get_setting(db, "ANTHROPIC_API_KEY")
-    openai_key = get_setting(db, "OPENAI_API_KEY")
-    google_key = get_setting(db, "GOOGLE_API_KEY")
-
-    if not anthropic_key and not openai_key and not google_key:
-        st.warning("⚠️ No API keys. Add in Settings tab.", icon="⚠️")
+    # Get API keys from settings OR environment variables
+    anthropic_key = get_setting(db, "ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY", "")
+    openai_key = get_setting(db, "OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
+    google_key = get_setting(db, "GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY", "") or os.environ.get("GOOGLE_API_KEY", "")
 
     # Initialize Memory System services (Phase 2)
     rag_service = None
@@ -85,8 +82,7 @@ def render_roundtable_panel(db: Session, project_id: Optional[int] = None):
         try:
             rag_service = RAGService()
             context_assembler = ContextAssembler(db=db, rag_service=rag_service)
-        except Exception as e:
-            # Memory system initialization failed, continue without it
+        except Exception:
             pass
 
     # Initialize service with memory integration
@@ -99,42 +95,43 @@ def render_roundtable_panel(db: Session, project_id: Optional[int] = None):
         context_assembler=context_assembler
     )
 
-    # Session Management Section
-    st.markdown("**Session**")
-
     # Check if tables exist - handle gracefully if not
     try:
         sessions = service.list_sessions(project_id=project_id)
     except Exception as e:
         if "does not exist" in str(e) or "UndefinedTable" in str(e):
-            show_warning("Roundtable tables not found. Please go to **System Status** tab and click **Initialize Schema** to create the required database tables.")
-            st.info("After initializing, refresh this page to use Roundtable Coder.")
+            show_warning("Roundtable tables not found. Please go to **System Status** tab and click **Initialize Schema**.")
             return
         else:
             show_error(f"Database error: {str(e)}")
             return
 
-    col1, col2, col3 = st.columns([3, 1, 1])
+    # Get existing sessions
+    session_options = {s.name: s.id for s in sessions}
+    session_options["+ New Session"] = None
 
-    with col1:
-        # Get existing sessions
-        session_options = {s.name: s.id for s in sessions}
-        session_options["+ New Session"] = None
+    # Check if we need to pre-select a newly created session
+    default_index = 0
+    option_keys = list(session_options.keys())
+    if "roundtable_new_session_name" in st.session_state:
+        new_name = st.session_state.roundtable_new_session_name
+        if new_name in option_keys:
+            default_index = option_keys.index(new_name)
+        del st.session_state.roundtable_new_session_name
 
-        # Check if we need to pre-select a newly created session
-        default_index = 0
-        option_keys = list(session_options.keys())
-        if "roundtable_new_session_name" in st.session_state:
-            new_name = st.session_state.roundtable_new_session_name
-            if new_name in option_keys:
-                default_index = option_keys.index(new_name)
-            del st.session_state.roundtable_new_session_name
+    # Title row with session selector on the right
+    title_col, session_col, delete_col, status_col = st.columns([2, 2, 0.5, 0.8])
 
+    with title_col:
+        st.markdown("### 🔄 Roundtable Coder")
+
+    with session_col:
         selected_name = st.selectbox(
-            "Select Session",
+            "Session",
             options=option_keys,
             index=default_index,
-            key="roundtable_session_selector"
+            key="roundtable_session_selector",
+            label_visibility="collapsed"
         )
 
     # Handle new session creation
@@ -148,7 +145,6 @@ def render_roundtable_panel(db: Session, project_id: Optional[int] = None):
                     name=new_name,
                     project_id=project_id
                 )
-                # Store name in different key to pre-select on next render
                 st.session_state.roundtable_new_session_name = new_session.name
                 show_success(f"Created session: {new_name}")
                 st.rerun()
@@ -165,14 +161,14 @@ def render_roundtable_panel(db: Session, project_id: Optional[int] = None):
         show_error("Session not found")
         return
 
-    with col2:
-        if st.button("🗑️ Delete", key="delete_session_btn"):
+    with delete_col:
+        if st.button("🗑️", key="delete_session_btn", help="Delete session"):
             service.delete_session(session_id)
             show_success("Session deleted")
             st.rerun()
 
-    with col3:
-        st.write(get_status_badge(session.status))
+    with status_col:
+        st.markdown(get_status_badge(session.status))
 
     # Two-column layout: Session Settings + Tools side by side
     settings_col, tools_col = st.columns([2, 1])
