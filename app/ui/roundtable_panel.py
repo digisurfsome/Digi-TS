@@ -68,8 +68,7 @@ def render_roundtable_panel(db: Session, project_id: Optional[int] = None):
         db: Database session
         project_id: Optional project ID to filter sessions
     """
-    st.header("🔄 Roundtable Coder")
-    st.caption("Multi-agent coding sessions with consensus-based validation")
+    st.markdown("### 🔄 Roundtable Coder")
 
     # Get API keys from settings
     anthropic_key = get_setting(db, "ANTHROPIC_API_KEY")
@@ -77,7 +76,7 @@ def render_roundtable_panel(db: Session, project_id: Optional[int] = None):
     google_key = get_setting(db, "GOOGLE_API_KEY")
 
     if not anthropic_key and not openai_key and not google_key:
-        show_warning("No API keys configured. Add ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY in Settings.")
+        st.warning("⚠️ No API keys. Add in Settings tab.", icon="⚠️")
 
     # Initialize Memory System services (Phase 2)
     rag_service = None
@@ -101,7 +100,7 @@ def render_roundtable_panel(db: Session, project_id: Optional[int] = None):
     )
 
     # Session Management Section
-    st.subheader("📋 Session")
+    st.markdown("**Session**")
 
     # Check if tables exist - handle gracefully if not
     try:
@@ -175,25 +174,23 @@ def render_roundtable_panel(db: Session, project_id: Optional[int] = None):
     with col3:
         st.write(get_status_badge(session.status))
 
-    # Session Settings
-    st.divider()
-    render_session_settings(service, session)
+    # Two-column layout: Session Settings + Tools side by side
+    settings_col, tools_col = st.columns([2, 1])
 
-    # Rounds Section
-    st.divider()
+    with settings_col:
+        render_session_settings(service, session)
+
+    with tools_col:
+        render_tools_section(db, service, session)
+
+    # Rounds and Execution in compact layout
     render_rounds_section(service, session)
-
-    # Execution Section
-    st.divider()
     render_execution_section(service, session)
-
-    # Tools Section (Phases F, H, I)
-    render_tools_section(db, service, session)
 
 
 def render_session_settings(service: RoundtableService, session: RoundtableSession):
     """Render session settings section."""
-    st.subheader("⚙️ Session Settings")
+    st.markdown("**⚙️ Settings**")
 
     col1, col2 = st.columns(2)
 
@@ -292,7 +289,7 @@ def render_rounds_section(service: RoundtableService, session: RoundtableSession
     col1, col2 = st.columns([3, 1])
 
     with col1:
-        st.subheader("🔄 Rounds")
+        st.markdown("**🔄 Rounds**")
 
     with col2:
         if st.button("➕ Add Round", key="add_round_btn"):
@@ -344,8 +341,6 @@ def render_round_card(
 
         # Agents Section
         render_agents_section(service, round_obj)
-
-        st.divider()
 
 
 def render_agents_section(service: RoundtableService, round_obj: RoundtableRound):
@@ -426,7 +421,7 @@ def render_agent_row(service: RoundtableService, agent: RoundtableAgent, index: 
 
 def render_execution_section(service: RoundtableService, session: RoundtableSession):
     """Render execution controls and results display."""
-    st.subheader("▶️ Execution")
+    st.markdown("**▶️ Execution**")
 
     if not session.rounds:
         show_info("Add at least one round before executing.")
@@ -998,8 +993,7 @@ def render_memory_status(service: RoundtableService, session: RoundtableSession)
 
 def render_tools_section(db, service: RoundtableService, session: RoundtableSession):
     """Render tools section with baton, GitHub, stats, memory, etc."""
-    st.divider()
-    st.subheader("🛠️ Tools")
+    st.markdown("**🛠️ Tools**")
 
     tab1, tab2, tab3, tab4 = st.tabs(["📦 Baton", "🧠 Memory", "🐙 GitHub", "📊 Stats"])
 

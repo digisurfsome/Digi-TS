@@ -1561,23 +1561,17 @@ def _render_detected_nodes_ui(db: Session, project_id: int) -> None:
 
 def render_cockpit_mode_toggle() -> bool:
     """
-    Render toggle for Cockpit Mode.
+    Render toggle for Cockpit Mode - compact horizontal layout.
 
     Returns:
         True if cockpit mode is active
     """
-    col1, col2 = st.columns([3, 1])
-
-    with col1:
-        st.markdown("**Layout Mode**")
-
-    with col2:
-        cockpit_mode = st.toggle(
-            "Cockpit",
-            value=st.session_state.get("cockpit_mode_active", False),
-            key="cockpit_mode_toggle",
-            help="Enable cockpit mode for all-panels-visible dashboard"
-        )
+    cockpit_mode = st.toggle(
+        "Cockpit Mode",
+        value=st.session_state.get("cockpit_mode_active", False),
+        key="cockpit_mode_toggle",
+        help="All-panels-visible dashboard"
+    )
 
     if cockpit_mode != st.session_state.get("cockpit_mode_active", False):
         st.session_state.cockpit_mode_active = cockpit_mode
