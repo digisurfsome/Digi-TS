@@ -122,9 +122,19 @@ def render_roundtable_panel(db: Session, project_id: Optional[int] = None):
         session_options = {s.name: s.id for s in sessions}
         session_options["+ New Session"] = None
 
+        # Check if we need to pre-select a newly created session
+        default_index = 0
+        option_keys = list(session_options.keys())
+        if "roundtable_new_session_name" in st.session_state:
+            new_name = st.session_state.roundtable_new_session_name
+            if new_name in option_keys:
+                default_index = option_keys.index(new_name)
+            del st.session_state.roundtable_new_session_name
+
         selected_name = st.selectbox(
             "Select Session",
-            options=list(session_options.keys()),
+            options=option_keys,
+            index=default_index,
             key="roundtable_session_selector"
         )
 
@@ -139,7 +149,8 @@ def render_roundtable_panel(db: Session, project_id: Optional[int] = None):
                     name=new_name,
                     project_id=project_id
                 )
-                st.session_state.roundtable_session_selector = new_session.name
+                # Store name in different key to pre-select on next render
+                st.session_state.roundtable_new_session_name = new_session.name
                 show_success(f"Created session: {new_name}")
                 st.rerun()
         return
