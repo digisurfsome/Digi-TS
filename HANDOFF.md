@@ -116,49 +116,36 @@ The goal: A system that can **build the rest of itself** and eventually generate
 
 ## What Comes Next (Phases 5+)
 
-### Phase 5: Document Ingestion Service
-**Priority:** HIGH - Enables bulk knowledge loading
-**Effort:** Medium
+### Phase 5: Knowledge Steward System
+**Priority:** HIGH - Enables bulk knowledge ingestion and chat mining
+**Effort:** Medium-High
+**Spec:** `/specs/KNOWLEDGE_STEWARD_SPEC.md`
 
-Create a service that lets users ingest documents, repos, and URLs into RAG:
+The Knowledge Steward solves the fundamental problem: **How do you synthesize knowledge that exceeds any single context window?**
+
+Key capabilities:
+1. **Chat Ingestion**: Process large chat exports (160k+ tokens each)
+2. **Gold Extraction**: Pull decisions, code, insights, questions from conversations
+3. **Master Index**: Compressed map (~5k tokens) that any agent can load
+4. **Document Ingestion**: Process docs, repos, URLs into RAG
 
 ```python
-# New file: app/services/document_ingestion_service.py
-
-class DocumentIngestionService:
-    def __init__(self, rag_service):
-        self.rag = rag_service
-
-    def ingest_file(self, file_path: str, category: str = "specs"):
-        """Read file, chunk it, store each chunk in RAG."""
-        content = read_file(file_path)
-        chunks = self.chunk_text(content)
-        for chunk in chunks:
-            self.rag.store(chunk, category, {"source": file_path})
-
-    def ingest_directory(self, dir_path: str, pattern: str = "**/*.md"):
-        """Crawl directory, ingest all matching files."""
-        for file in glob(dir_path, pattern):
-            self.ingest_file(file)
-
-    def ingest_repo(self, repo_path: str):
-        """Smart repo ingestion - extract classes, functions, docs."""
-        # Ingest Python files with AST parsing
-        # Ingest markdown documentation
-        # Store with appropriate categories
-
-    def ingest_url(self, url: str):
-        """Fetch URL content, parse, chunk, store."""
-        content = fetch_and_parse(url)
-        chunks = self.chunk_text(content)
-        for chunk in chunks:
-            self.rag.store(chunk, "specs", {"source": url})
+# Core services to build:
+# app/services/chat_ingestion_service.py
+# app/services/classification_engine.py
+# app/services/master_index_service.py
+# app/services/knowledge_query_service.py
 ```
 
+**The Pattern**: Turn 640k tokens of scattered conversations into a 5k token master index.
+
+**Chat Mining SaaS Opportunity**: Same system can be productized - users upload their AI chat history, get structured knowledge extraction, queryable index, and export options.
+
 **Add Conductor commands:**
-- `"ingest file: /path/to/file.md"`
-- `"ingest repo: external/agent-os"`
-- `"ingest url: https://docs.example.com"`
+- `"ingest chat: /path/to/chat.txt"`
+- `"show master index"`
+- `"find nuggets about: topic"`
+- `"what decisions did we make about X?"`
 
 ---
 
@@ -287,6 +274,7 @@ Upgrade Conductor with:
 | `app/services/build_test_loop.py` | Auto-fix iterations |
 | `app/services/conductor_service.py` | Orchestrator |
 | `scripts/seed_rag_knowledge.py` | Bulk knowledge seeder |
+| `specs/KNOWLEDGE_STEWARD_SPEC.md` | Phase 5 - Chat mining & master index |
 | `specs/AGENT_OS_INTEGRATION.md` | Phase 6 detailed spec |
 | `specs/MEMORY_SYSTEM_SPEC.md` | Memory system spec |
 | `specs/ORCHESTRATOR_SPEC.md` | Conductor/Elder Council spec |
@@ -371,19 +359,20 @@ For the next coding session:
    python scripts/seed_rag_knowledge.py
    ```
 
-3. **Build Document Ingestion Service** (Phase 5)
-   - Create `app/services/document_ingestion_service.py`
-   - Add Conductor commands
-   - Test with local files
+3. **Build Knowledge Steward** (Phase 5) - See `/specs/KNOWLEDGE_STEWARD_SPEC.md`
+   - Phase 5A: Chat ingestion service (chunking, basic extraction)
+   - Phase 5B: Classification engine (topic detection, gold density)
+   - Phase 5C: Master index generator (compressed map for agents)
+   - Phase 5D: Query interface + Conductor commands
 
-4. **Clone Agent OS repo** (if available)
-   ```bash
-   git clone [repo-url] external/agent-os
-   ```
+4. **Process the 4 chat exports:**
+   - Ingest each chat through the Knowledge Steward
+   - Build master index across all chats
+   - Extract gold nuggets (decisions, code, insights, questions)
 
-5. **Start Agent OS integration** (Phase 6)
-   - Create adapter
-   - Create integration service
+5. **Optional: Start Agent OS integration** (Phase 6)
+   - Clone repo: `git clone [repo-url] external/agent-os`
+   - Create adapter + integration service
    - Wire into Conductor
 
 ---
