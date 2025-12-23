@@ -3,6 +3,8 @@ Roundtable Coder UI Panel.
 
 Provides the user interface for creating sessions, managing rounds and agents,
 and executing roundtable coding sessions.
+
+Phase 2: Integrated with Memory System for context injection and auto-storage.
 """
 
 import streamlit as st
@@ -22,11 +24,20 @@ from app.services.roundtable_service import (
     AGENT_ROLES,
     PROMPT_PRESETS,
     TestRunner,
+    MEMORY_SYSTEM_AVAILABLE,
 )
 from app.services.github_service import GitHubService, validate_github_token
 from app.services import get_setting
 import json
 from app.ui.layout import show_success, show_error, show_warning, show_info
+
+# Memory System imports (Phase 2)
+try:
+    from app.services.rag_service import RAGService
+    from app.services.context_assembler import ContextAssembler
+except ImportError:
+    RAGService = None
+    ContextAssembler = None
 
 
 def get_status_badge(status: RoundtableSessionStatus) -> str:
@@ -68,12 +79,25 @@ def render_roundtable_panel(db: Session, project_id: Optional[int] = None):
     if not anthropic_key and not openai_key and not google_key:
         show_warning("No API keys configured. Add ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY in Settings.")
 
-    # Initialize service
+    # Initialize Memory System services (Phase 2)
+    rag_service = None
+    context_assembler = None
+    if MEMORY_SYSTEM_AVAILABLE and RAGService and ContextAssembler:
+        try:
+            rag_service = RAGService()
+            context_assembler = ContextAssembler(db=db, rag_service=rag_service)
+        except Exception as e:
+            # Memory system initialization failed, continue without it
+            pass
+
+    # Initialize service with memory integration
     service = RoundtableService(
         db=db,
         anthropic_key=anthropic_key,
         openai_key=openai_key,
-        google_key=google_key
+        google_key=google_key,
+        rag_service=rag_service,
+        context_assembler=context_assembler
     )
 
     # Session Management Section
@@ -806,21 +830,176 @@ def render_test_runner(builder_response: str, round_id: int):
 
 
 # =============================================================================
+# Phase 2: Memory System Status UI
+# =============================================================================
+
+def render_memory_status(service: RoundtableService, session: RoundtableSession):
+    """
+    Render Memory System status section.
+    Shows RAG statistics, context health, and memory controls.
+    """
+    st.markdown("### 🧠 Memory System Status")
+
+    # Get memory status from service
+    memory_status = service.get_memory_status()
+
+    if not memory_status["enabled"]:
+        show_warning("Memory System is not enabled. Install chromadb to enable: `pip install chromadb`")
+        return
+
+    # Show enabled status
+    st.success("✅ Memory System Active")
+
+    # RAG Statistics
+    st.markdown("#### 📊 RAG Database")
+
+    rag_stats = memory_status.get("rag_stats", {})
+    if rag_stats and "error" not in rag_stats:
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            st.metric("Decisions", rag_stats.get("decisions", 0))
+
+        with col2:
+            st.metric("Code Changes", rag_stats.get("code_changes", 0))
+
+        with col3:
+            st.metric("Errors", rag_stats.get("errors", 0))
+
+        with col4:
+            st.metric("Total Memories", rag_stats.get("total", 0))
+
+        # Additional stats in expander
+        with st.expander("All Categories"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Conversations", rag_stats.get("conversations", 0))
+            with col2:
+                st.metric("Specs", rag_stats.get("specs", 0))
+    else:
+        st.caption("RAG statistics unavailable")
+
+    # Context Health
+    st.markdown("#### 💚 Context Health")
+
+    context_health = memory_status.get("context_health", {})
+    if context_health and "error" not in context_health:
+        percentage = context_health.get("percentage", 0)
+        status = context_health.get("status", "unknown")
+
+        # Progress bar with color based on status
+        st.progress(min(percentage / 100, 1.0))
+
+        col1, col2 = st.columns(2)
+        with col1:
+            status_emoji = {"healthy": "🟢", "caution": "🟡", "critical": "🔴"}.get(status, "⚪")
+            st.markdown(f"**Status:** {status_emoji} {status.upper()}")
+
+        with col2:
+            remaining = context_health.get("remaining", 0)
+            st.markdown(f"**Remaining:** {remaining:,} tokens")
+
+        # Recommendation
+        recommendation = context_health.get("recommendation", "")
+        if recommendation:
+            if context_health.get("should_baton"):
+                st.warning(f"⚠️ {recommendation}")
+            else:
+                st.info(f"💡 {recommendation}")
+    else:
+        st.caption("Context health unavailable")
+
+    # Manual Decision Storage
+    st.markdown("#### 📝 Store Manual Decision")
+
+    with st.form("manual_decision_form"):
+        decision_text = st.text_area(
+            "Decision",
+            placeholder="e.g., We decided to use PostgreSQL for the database",
+            height=80
+        )
+        decision_context = st.text_input(
+            "Context (optional)",
+            placeholder="Additional context for this decision"
+        )
+
+        submitted = st.form_submit_button("Store Decision", type="primary")
+
+        if submitted and decision_text:
+            if service.store_manual_decision(
+                decision=decision_text,
+                context=decision_context or None,
+                project_id=session.project_id
+            ):
+                show_success("Decision stored in RAG!")
+                st.rerun()
+            else:
+                show_error("Failed to store decision")
+
+    # Quick Actions
+    st.markdown("#### ⚡ Quick Actions")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button("🔄 Refresh Stats", key="refresh_memory_stats"):
+            st.rerun()
+
+    with col2:
+        if st.button("🔍 Search Memory", key="search_memory_btn"):
+            st.session_state["show_memory_search"] = True
+
+    # Memory Search Modal
+    if st.session_state.get("show_memory_search"):
+        with st.expander("🔍 Search Memory", expanded=True):
+            search_query = st.text_input(
+                "Search query",
+                placeholder="e.g., database decisions",
+                key="memory_search_query"
+            )
+
+            if search_query and service.rag_service:
+                results = service.rag_service.retrieve(
+                    query=search_query,
+                    n_results=5,
+                    project_id=session.project_id
+                )
+
+                if results:
+                    st.markdown(f"**Found {len(results)} results:**")
+                    for i, result in enumerate(results, 1):
+                        with st.container():
+                            st.markdown(f"**{i}. [{result['category'].upper()}]**")
+                            st.text(result['content'][:300] + "..." if len(result['content']) > 300 else result['content'])
+                            st.caption(f"Distance: {result.get('distance', 'N/A'):.4f}")
+                            st.divider()
+                else:
+                    st.info("No results found")
+
+            if st.button("Close Search", key="close_memory_search"):
+                st.session_state["show_memory_search"] = False
+                st.rerun()
+
+
+# =============================================================================
 # Extended Panel with All Features
 # =============================================================================
 
 def render_tools_section(db, service: RoundtableService, session: RoundtableSession):
-    """Render tools section with baton, GitHub, stats, etc."""
+    """Render tools section with baton, GitHub, stats, memory, etc."""
     st.divider()
     st.subheader("🛠️ Tools")
 
-    tab1, tab2, tab3 = st.tabs(["📦 Baton", "🐙 GitHub", "📊 Stats"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📦 Baton", "🧠 Memory", "🐙 GitHub", "📊 Stats"])
 
     with tab1:
         render_baton_section(service, session)
 
     with tab2:
-        render_github_section(db, service, session)
+        render_memory_status(service, session)
 
     with tab3:
+        render_github_section(db, service, session)
+
+    with tab4:
         render_session_stats(service, session)
