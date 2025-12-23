@@ -148,6 +148,35 @@ from app.services.voice_service import (
     stop_recording,
 )
 
+# Phase 3: Testing Facility
+from app.services.testing_facility import (
+    # Enums
+    TestTier,
+    TestStatus,
+    # Data classes
+    TestResult,
+    TestSuiteResult,
+    # Main class
+    TestingFacility,
+    # Convenience functions
+    run_quick_test,
+    run_full_test,
+)
+
+from app.services.build_test_loop import (
+    # Enums
+    LoopStatus,
+    # Data classes
+    LoopIteration,
+    LoopResult,
+    # Main classes
+    BuildTestLoop,
+    BuildTestLoopWithRoundtable,
+    # Convenience functions
+    create_loop_for_project,
+    quick_test_loop,
+)
+
 __all__ = [
     # User service
     "get_or_create_default_user",
@@ -269,4 +298,20 @@ __all__ = [
     "create_recording_session",
     "start_recording",
     "stop_recording",
+    # Phase 3: Testing Facility
+    "TestTier",
+    "TestStatus",
+    "TestResult",
+    "TestSuiteResult",
+    "TestingFacility",
+    "run_quick_test",
+    "run_full_test",
+    # Phase 3: Build-Test Loop
+    "LoopStatus",
+    "LoopIteration",
+    "LoopResult",
+    "BuildTestLoop",
+    "BuildTestLoopWithRoundtable",
+    "create_loop_for_project",
+    "quick_test_loop",
 ]
