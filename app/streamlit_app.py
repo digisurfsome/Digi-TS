@@ -458,10 +458,10 @@ def main():
         st.caption(f"{settings.APP_NAME} v{settings.APP_VERSION}")
 
     # =========================================================================
-    # COMPACT LAYOUT: Status bar at top, then columns
+    # COMPACT LAYOUT: No separate status bar - integrated into panels
     # =========================================================================
 
-    # Get project and user info for status bar
+    # Get project and user info for inline display
     project = None
     time_away_str = None
     ideas_count = 0
@@ -475,7 +475,7 @@ def main():
 
             project = get_project_by_id(db, st.session_state.current_project_id)
             if project:
-                # Get stats for status bar
+                # Get stats for inline display
                 try:
                     stats = get_idea_stats(db, project.id, current_user.id)
                     ideas_count = stats.get('active', 0)
@@ -485,14 +485,6 @@ def main():
                         time_away_str = format_time_away(hours_away)
                 except Exception:
                     pass
-
-                # Render compact status bar at TOP (above columns)
-                render_compact_status_bar(
-                    project_name=project.name,
-                    is_ready=is_ready,
-                    ideas_count=ideas_count,
-                    time_away_str=time_away_str,
-                )
 
     # Main content area with columns (chat on left, tabs on right)
     chat_col, main_col = st.columns([1, 2])
@@ -535,12 +527,18 @@ def main():
         # Check for Cockpit Mode
         cockpit_active = is_cockpit_mode_active()
 
-        # Compact mode toggle row
-        mode_col1, mode_col2 = st.columns([4, 1])
-        with mode_col2:
-            render_cockpit_mode_toggle()
+        # Compact mode toggle row with status on right
+        mode_col1, status_col, mode_col2 = st.columns([3, 1.5, 1])
         with mode_col1:
             render_lab_mode_indicator()
+        with status_col:
+            # Ready status and ideas count
+            if is_ready:
+                st.success(f"✅ Ready | 💡 {ideas_count}", icon=None)
+            else:
+                st.warning(f"⏳ Warmup | 💡 {ideas_count}", icon=None)
+        with mode_col2:
+            render_cockpit_mode_toggle()
 
         # If Cockpit Mode is active, show the dashboard instead of tabs
         if cockpit_active and st.session_state.get("current_project_id"):

@@ -1207,7 +1207,12 @@ def render_chat_panel(
         user_id: Current user ID
         project: Current project
     """
-    st.subheader("💬 AI Chat")
+    # Header row: AI Chat title + Project name on same line
+    header_col, project_col = st.columns([1, 1])
+    with header_col:
+        st.markdown("### 💬 AI Chat")
+    with project_col:
+        st.markdown(f"📁 **{project.name}**")
 
     # Check for warmed pending sessions
     warmed_sessions = get_warmed_sessions(db, user_id, project.id)
@@ -1216,7 +1221,6 @@ def render_chat_panel(
         st.session_state.baton_notification_shown = True
 
     # Get or create chat session
-    # Check if we should use a different session from session state
     if "current_chat_session_id" in st.session_state:
         from app.core.models import ChatSession
         chat_session = db.query(ChatSession).filter(
@@ -1225,22 +1229,18 @@ def render_chat_panel(
             ChatSession.project_id == project.id
         ).first()
         if not chat_session:
-            # Session not found, get default
             chat_session = get_or_create_chat_session(db, user_id, project.id)
             st.session_state.current_chat_session_id = chat_session.id
     else:
         chat_session = get_or_create_chat_session(db, user_id, project.id)
         st.session_state.current_chat_session_id = chat_session.id
 
-    # Display current project and session info (Phase 8)
-    col1, col2, col3 = st.columns([2, 2, 1])
-    with col1:
-        st.markdown(f"**Project:** {project.name}")
-    with col2:
-        st.markdown(f"**Session:** {chat_session.title}")
-    with col3:
-        # New session button
-        new_session_clicked = st.button("🆕 New", help="Start a new clean session (no baton)", use_container_width=True)
+    # Session info row
+    session_col, new_col = st.columns([3, 1])
+    with session_col:
+        st.caption(f"Session: {chat_session.title}")
+    with new_col:
+        new_session_clicked = st.button("🆕 New", help="Start a new clean session", use_container_width=True)
 
     # =========================================================================
     # AGENT OS FLASH LABELS - Visible during chat (Phase 2A)
