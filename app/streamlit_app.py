@@ -527,17 +527,17 @@ def main():
         # Check for Cockpit Mode
         cockpit_active = is_cockpit_mode_active()
 
-        # Compact mode toggle row with status on right
-        mode_col1, status_col, mode_col2 = st.columns([3, 1.5, 1])
-        with mode_col1:
-            render_lab_mode_indicator()
-        with status_col:
-            # Ready status and ideas count
+        # Status line: Project | Ready | Cockpit - all on one tight line above tabs
+        proj_col, ready_col, cockpit_col = st.columns([2, 1, 1])
+        with proj_col:
+            project_name = st.session_state.get("current_project_name", "No Project")
+            st.markdown(f"📁 **{project_name}**")
+        with ready_col:
             if is_ready:
-                st.success(f"✅ Ready | 💡 {ideas_count}", icon=None)
+                st.markdown("✅ Ready")
             else:
-                st.warning(f"⏳ Warmup | 💡 {ideas_count}", icon=None)
-        with mode_col2:
+                st.markdown("⏳ Warmup")
+        with cockpit_col:
             render_cockpit_mode_toggle()
 
         # If Cockpit Mode is active, show the dashboard instead of tabs
