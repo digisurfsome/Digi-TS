@@ -2,6 +2,7 @@
 Roundtable Coder service.
 
 Handles session, round, and agent management for the Roundtable Coder feature.
+Integrates with Memory System (Phase 2) for context injection and auto-storage.
 """
 
 from typing import Optional, List, Dict, Any
@@ -18,6 +19,16 @@ from app.core.models import (
     AgentRole,
     VoteType,
 )
+
+# Memory System imports (Phase 2)
+try:
+    from app.services.rag_service import RAGService
+    from app.services.context_assembler import ContextAssembler
+    MEMORY_SYSTEM_AVAILABLE = True
+except ImportError:
+    MEMORY_SYSTEM_AVAILABLE = False
+    RAGService = None
+    ContextAssembler = None
 
 
 # Available models configuration
@@ -131,7 +142,9 @@ class RoundtableService:
         db: Session,
         anthropic_key: Optional[str] = None,
         openai_key: Optional[str] = None,
-        google_key: Optional[str] = None
+        google_key: Optional[str] = None,
+        rag_service: Optional["RAGService"] = None,
+        context_assembler: Optional["ContextAssembler"] = None
     ):
         """
         Initialize the RoundtableService.
@@ -141,12 +154,19 @@ class RoundtableService:
             anthropic_key: Anthropic API key (optional)
             openai_key: OpenAI API key (optional)
             google_key: Google AI API key (optional)
+            rag_service: RAG service for long-term memory (Phase 2)
+            context_assembler: Context assembler for memory integration (Phase 2)
         """
         self.db = db
         self.anthropic_client = None
         self.openai_client = None
         self.google_client = None
         self.google_key = google_key
+
+        # Memory System integration (Phase 2)
+        self.rag_service = rag_service
+        self.context_assembler = context_assembler
+        self.memory_enabled = MEMORY_SYSTEM_AVAILABLE and (rag_service is not None)
 
         if anthropic_key:
             try:
@@ -764,7 +784,8 @@ class RoundtableService:
                 "error": str or None,
                 "builder_response": RoundtableResponse or None,
                 "voter_responses": List[RoundtableResponse],
-                "consensus": dict from calculate_consensus()
+                "consensus": dict from calculate_consensus(),
+                "memory_stored": bool (Phase 2)
             }
         """
         round_obj = self.get_round(round_id)
@@ -782,6 +803,22 @@ class RoundtableService:
         system_prompt = session.master_prompt or DEFAULT_SYSTEM_PROMPT
         if session.master_guardrails:
             system_prompt += f"\n\n## Guardrails\n{session.master_guardrails}"
+
+        # PHASE 2: Inject assembled context from Memory System
+        assembled_context = ""
+        if self.memory_enabled and self.context_assembler:
+            try:
+                assembled_context = self.context_assembler.assemble(
+                    current_task=round_obj.task_prompt or "",
+                    project_id=session.project_id,
+                    include_rag=True,
+                    include_baton=True
+                )
+                if assembled_context:
+                    system_prompt = assembled_context + "\n\n---\n\n" + system_prompt
+            except Exception as e:
+                # Don't fail execution if memory system has issues
+                pass
 
         # Get agents sorted by order
         agents = sorted(round_obj.agents, key=lambda a: a.agent_order)
@@ -887,6 +924,34 @@ Please provide a detailed code review."""
         round_obj.status = "completed"
         round_obj.completed_at = datetime.utcnow()
         self.db.commit()
+
+        # PHASE 2: Auto-store in RAG after successful execution
+        result["memory_stored"] = False
+        if result["success"] and self.memory_enabled and self.rag_service:
+            try:
+                # Store code change if builder produced output
+                if result.get("builder_response") and result["builder_response"].content:
+                    self.rag_service.store_code_change(
+                        summary=round_obj.task_prompt or "Roundtable build",
+                        files=["roundtable-output"],
+                        details=result["builder_response"].content[:500],
+                        project_id=session.project_id,
+                        session_id=session.id
+                    )
+
+                # Store decision if consensus was reached
+                if result.get("consensus") and result["consensus"].get("passed"):
+                    self.rag_service.store_decision(
+                        decision=f"Approved: {round_obj.task_prompt or 'Roundtable task'}",
+                        context=f"Consensus: {result['consensus']['percentage']*100:.0f}% approval",
+                        project_id=session.project_id,
+                        session_id=session.id
+                    )
+
+                result["memory_stored"] = True
+            except Exception as e:
+                # Don't fail the result if memory storage fails
+                result["memory_error"] = str(e)
 
         return result
 
@@ -1239,6 +1304,78 @@ Please provide a detailed code review."""
             "rounds": rounds_data,
             "stats": stats
         }
+
+    # =========================================================================
+    # Phase 2: Memory System Integration
+    # =========================================================================
+
+    def get_memory_status(self) -> Dict[str, Any]:
+        """
+        Get current status of the Memory System integration.
+
+        Returns:
+            Dictionary with memory system status:
+            {
+                "enabled": bool,
+                "rag_available": bool,
+                "context_assembler_available": bool,
+                "rag_stats": dict (if RAG available),
+                "context_health": dict (if assembler available)
+            }
+        """
+        status = {
+            "enabled": self.memory_enabled,
+            "rag_available": self.rag_service is not None,
+            "context_assembler_available": self.context_assembler is not None,
+            "rag_stats": None,
+            "context_health": None
+        }
+
+        if self.rag_service:
+            try:
+                status["rag_stats"] = self.rag_service.get_stats()
+            except Exception:
+                status["rag_stats"] = {"error": "Failed to get stats"}
+
+        if self.context_assembler:
+            try:
+                # Estimate current token usage (rough estimate)
+                current_tokens = 0  # Could be calculated from session
+                status["context_health"] = self.context_assembler.get_context_health(current_tokens)
+            except Exception:
+                status["context_health"] = {"error": "Failed to get health"}
+
+        return status
+
+    def store_manual_decision(
+        self,
+        decision: str,
+        context: str = None,
+        project_id: int = None
+    ) -> bool:
+        """
+        Manually store a decision in RAG (for non-roundtable decisions).
+
+        Args:
+            decision: The decision text
+            context: Additional context
+            project_id: Optional project ID
+
+        Returns:
+            True if stored successfully
+        """
+        if not self.memory_enabled or not self.rag_service:
+            return False
+
+        try:
+            self.rag_service.store_decision(
+                decision=decision,
+                context=context,
+                project_id=project_id
+            )
+            return True
+        except Exception:
+            return False
 
 
 # =============================================================================
