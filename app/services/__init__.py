@@ -177,6 +177,19 @@ from app.services.build_test_loop import (
     quick_test_loop,
 )
 
+# Phase 4: Conductor (Orchestrator)
+from app.services.conductor_service import (
+    # Enums
+    CommandType,
+    # Data classes
+    ConductorAction,
+    ConductorResult,
+    # Main class
+    ConductorService,
+    # Convenience function
+    create_conductor,
+)
+
 __all__ = [
     # User service
     "get_or_create_default_user",
@@ -314,4 +327,10 @@ __all__ = [
     "BuildTestLoopWithRoundtable",
     "create_loop_for_project",
     "quick_test_loop",
+    # Phase 4: Conductor (Orchestrator)
+    "CommandType",
+    "ConductorAction",
+    "ConductorResult",
+    "ConductorService",
+    "create_conductor",
 ]
