@@ -553,35 +553,18 @@ def main():
                 else:
                     show_error("Project not found")
         else:
-            # Standard tabs mode
+            # Standard tabs mode - Reordered: Roundtable first, System Status last
             tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs(
-                ["🏠 System Status", "⚙️ Settings", "📋 Project Context", "🎨 Design Tree", "🤖 Agent OS", "💡 Idea Bank", "🧪 Lab Mode", "📄 Truth Doc", "📊 Process Log", "🔄 Roundtable"]
+                ["🔄 Roundtable", "🎨 Design Tree", "🤖 Agent OS", "📋 Project Context", "📄 Truth Doc", "💡 Idea Bank", "🧪 Lab Mode", "📊 Process Log", "⚙️ Settings", "🏠 System Status"]
             )
 
             with tab1:
-                render_system_status()
+                # Roundtable Coder - works with or without a project
+                with get_db() as db:
+                    project_id = st.session_state.get("current_project_id")
+                    render_roundtable_panel(db, project_id=project_id)
 
             with tab2:
-                if "current_user" in locals() and current_user:
-                    with get_db() as db:
-                        render_settings_ui(db, user_id=None)  # Global settings for now
-                else:
-                    st.info("Select a user to configure settings.")
-
-            with tab3:
-                if st.session_state.get("current_project_id"):
-                    with get_db() as db:
-                        from app.services import get_project_by_id
-
-                        project = get_project_by_id(db, st.session_state.current_project_id)
-                        if project:
-                            render_project_context_ui(db, project)
-                        else:
-                            show_error("⚠️ Selected project not found. Please select a project from the sidebar.")
-                else:
-                    st.info("📁 **No Project Selected**\n\nPlease select or create a project in the left sidebar to manage project context.")
-
-            with tab4:
                 if st.session_state.get("current_project_id"):
                     with get_db() as db:
                         from app.services import get_project_by_id
@@ -590,11 +573,11 @@ def main():
                         if project:
                             render_design_tree_panel(db, project)
                         else:
-                            show_error("⚠️ Selected project not found. Please select a project from the sidebar.")
+                            show_error("⚠️ Project not found.")
                 else:
-                    st.info("📁 **No Project Selected**\n\nPlease select or create a project in the left sidebar to manage design tree nodes.")
+                    st.info("📁 Select or create a project to manage design tree.")
 
-            with tab5:
+            with tab3:
                 # Agent OS - Transform rants into structured specs
                 if st.session_state.get("current_project_id"):
                     with get_db() as db:
@@ -602,13 +585,38 @@ def main():
 
                         project = get_project_by_id(db, st.session_state.current_project_id)
                         if project:
-                            # Get current chat session ID if available
                             session_id = st.session_state.get("current_chat_session_id")
                             render_agent_os_panel(db, project, session_id)
                         else:
-                            show_error("⚠️ Selected project not found. Please select a project from the sidebar.")
+                            show_error("⚠️ Project not found.")
                 else:
-                    st.info("📁 **No Project Selected**\n\nPlease select or create a project in the left sidebar to use Agent OS.")
+                    st.info("📁 Select or create a project to use Agent OS.")
+
+            with tab4:
+                if st.session_state.get("current_project_id"):
+                    with get_db() as db:
+                        from app.services import get_project_by_id
+
+                        project = get_project_by_id(db, st.session_state.current_project_id)
+                        if project:
+                            render_project_context_ui(db, project)
+                        else:
+                            show_error("⚠️ Project not found.")
+                else:
+                    st.info("📁 Select or create a project to manage context.")
+
+            with tab5:
+                if st.session_state.get("current_project_id"):
+                    with get_db() as db:
+                        from app.services import get_project_by_id
+
+                        project = get_project_by_id(db, st.session_state.current_project_id)
+                        if project:
+                            render_truth_doc_export_ui(db, project)
+                        else:
+                            show_error("⚠️ Project not found.")
+                else:
+                    st.info("📁 Select or create a project to export Truth Doc.")
 
             with tab6:
                 # Idea Bank - Phase 5 Learning & Memory
@@ -620,9 +628,9 @@ def main():
                         if project and current_user:
                             render_idea_bank_panel(db, project, current_user.id)
                         else:
-                            show_error("⚠️ Selected project not found. Please select a project from the sidebar.")
+                            show_error("⚠️ Project not found.")
                 else:
-                    st.info("📁 **No Project Selected**\n\nPlease select or create a project in the left sidebar to use Idea Bank.")
+                    st.info("📁 Select or create a project to use Idea Bank.")
 
             with tab7:
                 # Lab Mode - Test different feature combinations
@@ -634,32 +642,23 @@ def main():
                         if project:
                             render_lab_panel(db, project)
                         else:
-                            show_error("⚠️ Selected project not found. Please select a project from the sidebar.")
+                            show_error("⚠️ Project not found.")
                 else:
-                    st.info("📁 **No Project Selected**\n\nPlease select or create a project in the left sidebar to use Lab Mode.")
+                    st.info("📁 Select or create a project to use Lab Mode.")
 
             with tab8:
-                if st.session_state.get("current_project_id"):
-                    with get_db() as db:
-                        from app.services import get_project_by_id
-
-                        project = get_project_by_id(db, st.session_state.current_project_id)
-                        if project:
-                            render_truth_doc_export_ui(db, project)
-                        else:
-                            show_error("⚠️ Selected project not found. Please select a project from the sidebar.")
-                else:
-                    st.info("📁 **No Project Selected**\n\nPlease select or create a project in the left sidebar to export Truth Doc.")
-
-            with tab9:
                 from app.services import render_process_log
                 render_process_log()
 
+            with tab9:
+                if "current_user" in locals() and current_user:
+                    with get_db() as db:
+                        render_settings_ui(db, user_id=None)
+                else:
+                    st.info("Select a user to configure settings.")
+
             with tab10:
-                # Roundtable Coder - works with or without a project
-                with get_db() as db:
-                    project_id = st.session_state.get("current_project_id")
-                    render_roundtable_panel(db, project_id=project_id)
+                render_system_status()
 
     # Render footer
     render_footer()
