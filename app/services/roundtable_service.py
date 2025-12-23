@@ -30,6 +30,25 @@ except ImportError:
     RAGService = None
     ContextAssembler = None
 
+# Testing Facility imports (Phase 3)
+try:
+    from app.services.testing_facility import (
+        TestingFacility,
+        TestSuiteResult,
+        TestStatus,
+    )
+    from app.services.build_test_loop import (
+        BuildTestLoop,
+        LoopResult,
+        LoopStatus,
+    )
+    TESTING_SYSTEM_AVAILABLE = True
+except ImportError:
+    TESTING_SYSTEM_AVAILABLE = False
+    TestingFacility = None
+    TestSuiteResult = None
+    BuildTestLoop = None
+
 
 # Available models configuration
 AVAILABLE_MODELS = {
@@ -144,7 +163,9 @@ class RoundtableService:
         openai_key: Optional[str] = None,
         google_key: Optional[str] = None,
         rag_service: Optional["RAGService"] = None,
-        context_assembler: Optional["ContextAssembler"] = None
+        context_assembler: Optional["ContextAssembler"] = None,
+        testing_facility: Optional["TestingFacility"] = None,
+        project_path: Optional[str] = None
     ):
         """
         Initialize the RoundtableService.
@@ -156,6 +177,8 @@ class RoundtableService:
             google_key: Google AI API key (optional)
             rag_service: RAG service for long-term memory (Phase 2)
             context_assembler: Context assembler for memory integration (Phase 2)
+            testing_facility: Testing facility for code validation (Phase 3)
+            project_path: Project root path for testing (Phase 3)
         """
         self.db = db
         self.anthropic_client = None
@@ -167,6 +190,11 @@ class RoundtableService:
         self.rag_service = rag_service
         self.context_assembler = context_assembler
         self.memory_enabled = MEMORY_SYSTEM_AVAILABLE and (rag_service is not None)
+
+        # Testing System integration (Phase 3)
+        self.testing_facility = testing_facility
+        self.project_path = project_path
+        self.testing_enabled = TESTING_SYSTEM_AVAILABLE and (testing_facility is not None)
 
         if anthropic_key:
             try:
@@ -1023,6 +1051,199 @@ Please provide a detailed code review."""
             "threshold": threshold,
             "passed": passed,
             "feedback": feedback,
+        }
+
+    # =========================================================================
+    # Phase 3: Testing System Integration
+    # =========================================================================
+
+    def execute_round_with_testing(
+        self,
+        round_id: int,
+        execution_mode: Optional[str] = None,
+        auto_fix: bool = True,
+        max_fix_iterations: int = 3
+    ) -> Dict[str, Any]:
+        """
+        Execute a round and automatically run tests.
+        Optionally auto-fix if tests fail.
+
+        Args:
+            round_id: Round ID to execute
+            execution_mode: "single" or "multi"
+            auto_fix: Whether to auto-fix on test failures
+            max_fix_iterations: Maximum fix iterations
+
+        Returns:
+            Dictionary with execution results including test results
+        """
+        # Execute initial build round
+        result = self.execute_round(round_id, execution_mode)
+
+        if not result.get("success"):
+            return result
+
+        # Run tests if testing is enabled and builder produced output
+        if self.testing_enabled and self.testing_facility:
+            if result.get("builder_response") and result["builder_response"].content:
+                code = result["builder_response"].content
+                test_result = self.testing_facility.run_all_tests(code=code)
+                result["test_results"] = test_result.to_dict()
+                result["all_tests_passed"] = test_result.all_passed
+
+                # Auto-fix loop if enabled and tests failed
+                if auto_fix and not test_result.all_passed:
+                    loop_result = self._run_fix_loop(
+                        round_id=round_id,
+                        initial_code=code,
+                        initial_test_result=test_result,
+                        max_iterations=max_fix_iterations
+                    )
+                    result["loop_result"] = loop_result
+                    if loop_result.get("success"):
+                        result["final_code"] = loop_result.get("final_code")
+                        result["all_tests_passed"] = True
+
+        return result
+
+    def _run_fix_loop(
+        self,
+        round_id: int,
+        initial_code: str,
+        initial_test_result: "TestSuiteResult",
+        max_iterations: int = 3
+    ) -> Dict[str, Any]:
+        """
+        Run the fix loop to resolve test failures.
+
+        Args:
+            round_id: Round ID for context
+            initial_code: Code that failed tests
+            initial_test_result: Initial test results
+            max_iterations: Maximum fix attempts
+
+        Returns:
+            Dictionary with loop results
+        """
+        if not TESTING_SYSTEM_AVAILABLE:
+            return {"success": False, "error": "Testing system not available"}
+
+        round_obj = self.get_round(round_id)
+        if not round_obj:
+            return {"success": False, "error": "Round not found"}
+
+        current_code = initial_code
+        test_result = initial_test_result
+        history = []
+
+        for iteration in range(1, max_iterations + 1):
+            # Build fix prompt
+            failures = self.testing_facility.get_failure_summary(test_result)
+            fix_prompt = f"""The previous code has test failures that need to be fixed.
+
+## Previous Code
+```python
+{current_code[:5000]}
+```
+
+## Test Failures
+{failures}
+
+## Your Task
+Fix the code to make all tests pass. Only modify what's necessary.
+Return the complete fixed code.
+"""
+
+            # Update round task and execute
+            self.update_round(round_id, task_prompt=fix_prompt)
+            fix_result = self.execute_round(round_id)
+
+            if not fix_result.get("success"):
+                history.append({
+                    "iteration": iteration,
+                    "phase": "build",
+                    "success": False,
+                    "error": fix_result.get("error")
+                })
+                continue
+
+            if fix_result.get("builder_response"):
+                current_code = fix_result["builder_response"].content
+
+            # Test the fixed code
+            test_result = self.testing_facility.run_all_tests(code=current_code)
+
+            history.append({
+                "iteration": iteration,
+                "phase": "test",
+                "success": test_result.all_passed,
+                "passed": test_result.passed,
+                "failed": test_result.failed
+            })
+
+            if test_result.all_passed:
+                return {
+                    "success": True,
+                    "final_code": current_code,
+                    "iterations": iteration,
+                    "history": history,
+                    "message": f"All tests passed after {iteration} fix iteration(s)"
+                }
+
+        # Max iterations reached
+        return {
+            "success": False,
+            "final_code": current_code,
+            "iterations": max_iterations,
+            "history": history,
+            "message": f"Max iterations ({max_iterations}) reached",
+            "remaining_failures": self.testing_facility.get_failure_summary(test_result)
+        }
+
+    def test_round_output(self, round_id: int) -> Dict[str, Any]:
+        """
+        Test the latest builder response from a round.
+
+        Args:
+            round_id: Round ID to test
+
+        Returns:
+            Dictionary with test results
+        """
+        if not self.testing_enabled:
+            return {"success": False, "error": "Testing not enabled"}
+
+        responses = self.get_round_responses(round_id)
+
+        if not responses.get("builder") or not responses["builder"]["response"]:
+            return {"success": False, "error": "No builder response found"}
+
+        code = responses["builder"]["response"].content
+        test_result = self.testing_facility.run_all_tests(code=code)
+
+        return {
+            "success": True,
+            "test_results": test_result.to_dict(),
+            "all_passed": test_result.all_passed,
+            "summary": self.testing_facility.get_failure_summary(test_result)
+        }
+
+    def get_testing_status(self) -> Dict[str, Any]:
+        """
+        Get current status of the Testing System integration.
+
+        Returns:
+            Dictionary with testing system status
+        """
+        return {
+            "enabled": self.testing_enabled,
+            "available": TESTING_SYSTEM_AVAILABLE,
+            "facility_configured": self.testing_facility is not None,
+            "project_path": self.project_path,
+            "enabled_tiers": (
+                self.testing_facility.enabled_tiers
+                if self.testing_facility else []
+            )
         }
 
     # =========================================================================
