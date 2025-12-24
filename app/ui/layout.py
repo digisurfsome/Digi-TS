@@ -48,7 +48,7 @@ def inject_compact_css() -> None:
     """
     st.markdown("""
     <style>
-    /* AGGRESSIVE: Remove ALL top space */
+    /* AGGRESSIVE: Remove ALL top space - ZERO GAP */
     .main .block-container {
         padding-top: 0 !important;
         padding-bottom: 0 !important;
@@ -59,6 +59,7 @@ def inject_compact_css() -> None:
     /* Hide ALL Streamlit chrome */
     header[data-testid="stHeader"] {
         display: none !important;
+        height: 0 !important;
     }
     #MainMenu {display: none !important;}
     footer {display: none !important;}
@@ -70,10 +71,31 @@ def inject_compact_css() -> None:
         padding-top: 0 !important;
     }
 
-    /* Target the app view container */
+    /* Target the app view container - ZERO top space */
     .appview-container {
         margin-top: 0 !important;
         padding-top: 0 !important;
+    }
+
+    /* Remove the top padding from main content area */
+    [data-testid="stAppViewContainer"] {
+        padding-top: 0 !important;
+        margin-top: 0 !important;
+    }
+
+    [data-testid="stAppViewContainer"] > div:first-child {
+        padding-top: 0 !important;
+        margin-top: 0 !important;
+    }
+
+    /* Target stVerticalBlock to remove top gap */
+    [data-testid="stVerticalBlock"] {
+        gap: 0.25rem !important;
+    }
+
+    [data-testid="stVerticalBlock"]:first-child {
+        padding-top: 0 !important;
+        margin-top: 0 !important;
     }
 
     section[data-testid="stSidebar"] {
@@ -82,11 +104,17 @@ def inject_compact_css() -> None:
 
     .stApp {
         margin-top: 0 !important;
+        padding-top: 0 !important;
     }
 
     /* Remove iframe padding if embedded */
     .stApp > header + div {
         padding-top: 0 !important;
+    }
+
+    /* Remove any toolbar/header gaps */
+    .stToolbar {
+        display: none !important;
     }
 
     /* Tighter tab styling */

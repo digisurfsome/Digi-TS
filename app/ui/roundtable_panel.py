@@ -29,7 +29,7 @@ from app.services.roundtable_service import (
 from app.services.github_service import GitHubService, validate_github_token
 from app.services import get_setting
 import json
-from app.ui.layout import show_success, show_error, show_warning, show_info
+from app.ui.layout import show_success, show_error, show_warning, show_info, render_token_meter
 from app.ui.qualification_panel import (
     render_qualification_status_badge,
     render_auto_qualify_button,
@@ -124,11 +124,55 @@ def render_roundtable_panel(db: Session, project_id: Optional[int] = None):
             default_index = option_keys.index(new_name)
         del st.session_state.roundtable_new_session_name
 
-    # Title row with session selector on the right
-    title_col, session_col, delete_col, status_col = st.columns([2, 2, 0.5, 0.8])
+    # Title row with token info and session selector
+    title_col, token_col, warmup_col, session_col, delete_col, status_col = st.columns([1.5, 1.5, 0.8, 1.5, 0.4, 0.6])
 
     with title_col:
         st.markdown("### 🔄 Roundtable Coder")
+
+    # Token Usage (Item 5) - inline display
+    with token_col:
+        # Get current chat session for token display
+        chat_session_id = st.session_state.get("current_chat_session_id")
+        if chat_session_id:
+            from app.services import get_token_usage, get_all_settings
+            settings = get_all_settings(db)
+            max_tokens = int(settings.get("max_context_tokens", "128000"))
+            token_usage = get_token_usage(db, chat_session_id)
+            total_tokens = token_usage["total_tokens_used"]
+            percent_used = (total_tokens / max_tokens) * 100 if max_tokens > 0 else 0
+
+            # Color based on usage
+            if percent_used < 50:
+                color = "🟢"
+            elif percent_used < 70:
+                color = "🟡"
+            elif percent_used < 90:
+                color = "🟠"
+            else:
+                color = "🔴"
+
+            st.markdown(f"**{color} Token Usage:** {total_tokens:,} / {max_tokens:,} ({percent_used:.1f}%)")
+
+            # Token Details expander (Item 6)
+            with st.expander("Token Details"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.caption(f"Prompt: {token_usage['total_prompt_tokens']:,}")
+                with col2:
+                    st.caption(f"Completion: {token_usage['total_completion_tokens']:,}")
+        else:
+            st.caption("No session")
+
+    # Show warm-up checkbox (Item 7)
+    with warmup_col:
+        show_warmup = st.checkbox(
+            "Show warm-up",
+            value=st.session_state.get("show_warmup_messages", False),
+            key="roundtable_show_warmup_checkbox",
+            help="Show/hide warmup messages"
+        )
+        st.session_state.show_warmup_messages = show_warmup
 
     with session_col:
         selected_name = st.selectbox(
