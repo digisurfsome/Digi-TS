@@ -480,20 +480,23 @@ def render_agent_row(service: RoundtableService, agent: RoundtableAgent, index: 
 
 
 def render_execution_section(service: RoundtableService, session: RoundtableSession):
-    """Render execution controls and results display."""
-    st.markdown("**▶️ Execution**")
-
+    """Render execution controls - COMPACT."""
     if not session.rounds:
-        show_info("Add at least one round before executing.")
+        st.caption("▶️ Execution: Add a round first")
         return
 
-    # Round selector
+    # All on one row: Label | Round selector | Run | Re-run | Status
+    col1, col2, col3, col4, col5 = st.columns([0.8, 1.5, 0.8, 0.6, 1])
+
+    with col1:
+        st.caption("▶️ Execute")
+
     round_options = {r.name: r.id for r in session.rounds}
-    selected_round_name = st.selectbox(
-        "Select Round to Execute",
-        options=list(round_options.keys()),
-        key="exec_round_selector"
-    )
+    with col2:
+        selected_round_name = st.selectbox(
+            "Round", options=list(round_options.keys()),
+            key="exec_round_selector", label_visibility="collapsed"
+        )
 
     selected_round_id = round_options.get(selected_round_name)
     if not selected_round_id:
@@ -503,43 +506,25 @@ def render_execution_section(service: RoundtableService, session: RoundtableSess
     if not selected_round:
         return
 
-    # Check for agents
-    if not selected_round.agents:
-        show_warning("This round has no agents configured.")
-        return
-
     # Check for builder
     builders = [a for a in selected_round.agents if a.role == AgentRole.BUILDER]
-    if not builders:
-        show_warning("This round needs at least one Builder agent.")
-        return
+    has_builder = len(builders) > 0
 
-    # Execution buttons
-    col1, col2, col3 = st.columns([1, 1, 2])
-
-    with col1:
+    with col3:
         run_clicked = st.button(
-            "▶️ Run Round",
-            key="run_round_btn",
-            type="primary",
-            disabled=(selected_round.status == "running")
+            "▶️ Run", key="run_round_btn", type="primary",
+            disabled=(selected_round.status == "running" or not has_builder)
         )
 
-    with col2:
+    with col4:
         rerun_clicked = st.button(
-            "🔄 Re-run",
-            key="rerun_round_btn",
+            "🔄", key="rerun_round_btn",
             disabled=(selected_round.status != "completed")
         )
 
-    with col3:
-        # Status display
-        status_text = {
-            "pending": "⏳ Ready to run",
-            "running": "🔄 Running...",
-            "completed": "✅ Completed"
-        }.get(selected_round.status, "❓ Unknown")
-        st.markdown(f"**Status:** {status_text}")
+    with col5:
+        status_emoji = {"pending": "⏳", "running": "🔄", "completed": "✅"}.get(selected_round.status, "❓")
+        st.caption(f"{status_emoji} {selected_round.status}")
 
     # Handle execution
     if run_clicked or rerun_clicked:
@@ -569,15 +554,14 @@ def render_round_results(
     round_obj: RoundtableRound,
     execution_mode: str
 ):
-    """Render results for a completed round."""
-    st.markdown("### 📊 Results")
+    """Render results for a completed round - COMPACT."""
+    st.caption("📊 Results")
 
     # Get all responses for this round
     for agent in round_obj.agents:
         if not agent.responses:
             continue
 
-        # Get latest response
         latest = agent.responses[-1] if agent.responses else None
         if not latest:
             continue
@@ -588,61 +572,34 @@ def render_round_results(
         # Vote badge for voters
         vote_badge = ""
         if agent.role == AgentRole.VOTER and latest.vote:
-            vote_badges = {
-                "approve": "👍 APPROVE",
-                "reject": "👎 REJECT",
-                "abstain": "🤷 ABSTAIN"
-            }
+            vote_badges = {"approve": "👍", "reject": "👎", "abstain": "🤷"}
             vote_badge = vote_badges.get(latest.vote.value, "")
 
-        with st.expander(f"**{model_name}** - {role_badge} {vote_badge}", expanded=True):
-            # Metrics row
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Tokens", f"{latest.tokens_input + latest.tokens_output:,}")
-            with col2:
-                st.metric("Cost", f"${latest.cost:.4f}")
-            with col3:
-                st.metric("Time", f"{latest.duration_seconds:.1f}s")
+        # Compact header with inline metrics
+        tokens = latest.tokens_input + latest.tokens_output
+        header = f"**{model_name}** {role_badge} {vote_badge} | {tokens:,} tok | ${latest.cost:.4f} | {latest.duration_seconds:.1f}s"
 
-            # Content
-            st.markdown("**Response:**")
+        with st.expander(header, expanded=True):
             st.code(latest.content, language="markdown")
-
-            # Copy button
             if st.button("📋 Copy", key=f"copy_{latest.id}"):
-                st.write("Content copied to clipboard!")  # Streamlit doesn't have clipboard API
+                st.toast("Copied!")
 
-    # Consensus display (multi-agent mode only)
+    # Consensus display (multi-agent mode only) - COMPACT
     if execution_mode == "multi":
         consensus = service.calculate_consensus(round_obj.id)
         if consensus and consensus.get("total_voters", 0) > 0:
-            st.markdown("### 🗳️ Consensus")
+            approval_pct = consensus["percentage"] * 100
+            threshold_pct = consensus["threshold"] * 100
+            passed = consensus["passed"]
 
-            col1, col2 = st.columns(2)
+            # Single line consensus display
+            status = "✅ PASSED" if passed else "❌ FAILED"
+            st.caption(f"🗳️ Consensus: {consensus['approvals']}/{consensus['total_voters']} ({approval_pct:.0f}%/{threshold_pct:.0f}%) {status}")
 
-            with col1:
-                approval_pct = consensus["percentage"] * 100
-                threshold_pct = consensus["threshold"] * 100
-
-                # Progress bar for approval percentage
-                st.progress(consensus["percentage"])
-                st.caption(
-                    f"{consensus['approvals']}/{consensus['total_voters']} approved "
-                    f"({approval_pct:.0f}% / {threshold_pct:.0f}% needed)"
-                )
-
-            with col2:
-                if consensus["passed"]:
-                    st.success("✅ CONSENSUS REACHED")
-                else:
-                    st.error("❌ CONSENSUS NOT REACHED")
-
-            # Feedback from rejections
-            if consensus.get("feedback"):
-                with st.expander("📝 Rejection Feedback"):
+            if consensus.get("feedback") and not passed:
+                with st.expander("📝 Feedback"):
                     for fb in consensus["feedback"]:
-                        st.markdown(f"- {fb[:500]}...")
+                        st.caption(f"• {fb[:200]}...")
 
 
 # =============================================================================
