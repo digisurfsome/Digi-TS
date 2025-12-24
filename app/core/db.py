@@ -196,8 +196,62 @@ def check_tables_exist() -> tuple[bool, list[str]]:
             "roundtable_rounds",
             "roundtable_agents",
             "roundtable_responses",
+            # Agent qualification tables
+            "agent_qualifications",
+            "pipeline_settings",
         ]
 
         return len(existing_tables) > 0, existing_tables
     except Exception as e:
         return False, []
+
+
+def run_migrations() -> tuple[bool, str]:
+    """
+    Run database migrations to add new columns and tables.
+
+    This handles schema changes that create_all() cannot do
+    (like adding columns to existing tables).
+
+    Returns:
+        Tuple of (success: bool, message: str)
+    """
+    from sqlalchemy import inspect
+
+    try:
+        engine = get_engine()
+        inspector = inspect(engine)
+        migrations_run = []
+
+        # Check if projects table exists and needs github_repo column
+        if "projects" in inspector.get_table_names():
+            columns = [col["name"] for col in inspector.get_columns("projects")]
+            if "github_repo" not in columns:
+                with engine.connect() as conn:
+                    conn.execute(text("ALTER TABLE projects ADD COLUMN github_repo VARCHAR(255)"))
+                    conn.commit()
+                migrations_run.append("Added github_repo column to projects table")
+                _log("info", "Migration", "Added github_repo column to projects table")
+
+        # Create new tables if they don't exist (create_all handles this)
+        from app.core import models  # noqa: F401
+        existing_tables = inspector.get_table_names()
+
+        if "agent_qualifications" not in existing_tables:
+            models.AgentQualification.__table__.create(engine, checkfirst=True)
+            migrations_run.append("Created agent_qualifications table")
+            _log("info", "Migration", "Created agent_qualifications table")
+
+        if "pipeline_settings" not in existing_tables:
+            models.PipelineSettings.__table__.create(engine, checkfirst=True)
+            migrations_run.append("Created pipeline_settings table")
+            _log("info", "Migration", "Created pipeline_settings table")
+
+        if migrations_run:
+            return True, f"Migrations completed: {'; '.join(migrations_run)}"
+        else:
+            return True, "No migrations needed"
+
+    except Exception as e:
+        _log("error", "Migration", f"Migration failed: {str(e)}")
+        return False, f"Migration failed: {str(e)}"

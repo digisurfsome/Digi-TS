@@ -13,6 +13,7 @@ from app.services import (
     list_all_users,
     list_user_projects,
     create_project,
+    update_project,
     get_all_settings,
     set_multiple_settings,
     get_project_context,
@@ -698,6 +699,25 @@ def render_project_selector(
 
     # Return the selected project
     selected_project = project_options[selected_name]
+
+    # Project settings expander for editing GitHub repo
+    with st.expander("⚙️ Project Settings", expanded=False):
+        current_repo = selected_project.github_repo or ""
+        new_repo = st.text_input(
+            "GitHub Repository",
+            value=current_repo,
+            placeholder="owner/repo-name",
+            help="Format: owner/repo-name (e.g., myuser/myproject)",
+            key="project_github_repo_setting"
+        )
+
+        if st.button("💾 Save", key="save_project_settings"):
+            repo_value = new_repo.strip() if new_repo else None
+            if repo_value != (selected_project.github_repo or None):
+                update_project(db, selected_project.id, github_repo=repo_value)
+                show_success("Project settings saved!")
+                st.rerun()
+
     return selected_project, False
 
 
@@ -721,6 +741,11 @@ def render_create_project_form(db: Session, user: UserProfile) -> Optional[Proje
             placeholder="Describe your project...",
             height=100
         )
+        github_repo = st.text_input(
+            "GitHub Repository (optional)",
+            placeholder="owner/repo-name",
+            help="Format: owner/repo-name (e.g., myuser/myproject)"
+        )
 
         col1, col2 = st.columns(2)
         with col1:
@@ -738,7 +763,8 @@ def render_create_project_form(db: Session, user: UserProfile) -> Optional[Proje
                     db,
                     name=name.strip(),
                     owner_id=user.id,
-                    description=description.strip() if description else None
+                    description=description.strip() if description else None,
+                    github_repo=github_repo.strip() if github_repo else None
                 )
                 show_success(f"Project '{project.name}' created successfully!")
                 # Set session state BEFORE rerun so the project loads after refresh
@@ -1284,6 +1310,19 @@ def render_chat_panel(
         clear_button = st.button("🗑️ Clear", use_container_width=True)
     with col3:
         baton_button = st.button("🎯 Baton", use_container_width=True)
+
+    # Token Usage Meter (Item 5)
+    max_tokens = int(settings.get("max_context_tokens", "128000"))
+    render_token_meter(db, chat_session.id, max_tokens)
+
+    # Show warm-up checkbox (Item 7)
+    show_warmup = st.checkbox(
+        "Show warm-up",
+        value=st.session_state.get("show_warmup_messages", False),
+        key="show_warmup_checkbox",
+        help="Show/hide warmup messages in the chat"
+    )
+    st.session_state.show_warmup_messages = show_warmup
 
     # Handle clear
     if clear_button:

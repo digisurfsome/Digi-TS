@@ -2366,12 +2366,178 @@ def render_agent_os_panel(
             doc = new_doc
             st.rerun()
 
+        st.divider()
+
+        # Auto-chain workflow
+        render_auto_chain_workflow(db, project, session_id, doc)
+
     with gaps_tab:
         # Detailed gap analysis view (Mechanism 7)
         render_gap_analysis_view(doc, db, project)
 
     with raw_tab:
         render_raw_rant_view(db, project, doc)
+
+
+def render_auto_chain_workflow(
+    db: Session,
+    project: Project,
+    session_id: Optional[int],
+    doc: Optional[AgentOSDocument]
+) -> None:
+    """
+    Render the auto-chain workflow for Agent OS -> Phases -> Build.
+
+    This implements the pipeline:
+    1. Codebase Exploration (warmup)
+    2. Agent OS Blueprint creation
+    3. Phase breakdown
+    4. Per-phase testing
+    5. Integration testing
+    6. Build
+
+    Uses pipeline settings for prompts and toggles.
+    """
+    from app.services.pipeline_settings_service import (
+        get_pipeline_setting_with_default,
+        get_toggle,
+        DEFAULT_CODEBASE_EXPLORATION_PROMPT,
+        DEFAULT_AGENT_OS_BLUEPRINT_PROMPT,
+        DEFAULT_PHASE_BREAKDOWN_PROMPT,
+    )
+
+    st.subheader("🔗 Auto-Chain Workflow")
+
+    st.markdown("""
+    **Pipeline Steps:**
+    1. 🔍 Codebase Exploration (Warmup)
+    2. 📋 Agent OS Blueprint
+    3. 📊 Phase Breakdown
+    4. 🧪 Phase Testing
+    5. 🔧 Build
+    """)
+
+    # Get user_id (default for now)
+    user_id = 1
+
+    # Get toggles
+    pause_after_os = get_toggle(db, user_id, "pause_after_agent_os", project.id if project else None)
+    pause_after_phases = get_toggle(db, user_id, "pause_after_phases", project.id if project else None)
+    pause_before_build = get_toggle(db, user_id, "pause_before_build", project.id if project else None)
+
+    # Display current settings
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.caption(f"Pause after OS: {'✓' if pause_after_os else '✗'}")
+    with col2:
+        st.caption(f"Pause after Phases: {'✓' if pause_after_phases else '✗'}")
+    with col3:
+        st.caption(f"Pause before Build: {'✓' if pause_before_build else '✗'}")
+
+    st.divider()
+
+    # Session state for workflow
+    if "auto_chain_step" not in st.session_state:
+        st.session_state.auto_chain_step = 0
+    if "auto_chain_prompts" not in st.session_state:
+        st.session_state.auto_chain_prompts = {}
+
+    current_step = st.session_state.auto_chain_step
+
+    # Step 1: Codebase Exploration
+    st.markdown("##### Step 1: Codebase Exploration")
+    if current_step == 0:
+        exploration_prompt = get_pipeline_setting_with_default(
+            db, user_id, "codebase_exploration_prompt", project.id if project else None
+        )
+        st.code(exploration_prompt[:500] + "..." if len(exploration_prompt) > 500 else exploration_prompt)
+
+        if st.button("📋 Copy Exploration Prompt", key="copy_exploration"):
+            st.session_state.auto_chain_prompts["exploration"] = exploration_prompt
+            st.toast("Copied! Send this to your AI agent.")
+
+        if st.button("✅ Mark Exploration Complete", key="mark_exploration_done"):
+            st.session_state.auto_chain_step = 1
+            st.rerun()
+    else:
+        st.success("✓ Exploration complete")
+
+    # Step 2: Agent OS Blueprint
+    st.markdown("##### Step 2: Agent OS Blueprint")
+    if current_step == 1:
+        blueprint_prompt = get_pipeline_setting_with_default(
+            db, user_id, "agent_os_blueprint_prompt", project.id if project else None
+        )
+        st.code(blueprint_prompt[:500] + "..." if len(blueprint_prompt) > 500 else blueprint_prompt)
+
+        if st.button("📋 Copy Blueprint Prompt", key="copy_blueprint"):
+            st.session_state.auto_chain_prompts["blueprint"] = blueprint_prompt
+            st.toast("Copied! Send this to your AI agent.")
+
+        if st.button("✅ Mark Blueprint Complete", key="mark_blueprint_done"):
+            if pause_after_os:
+                show_info("Pausing for review (pause_after_agent_os enabled)")
+                st.session_state.auto_chain_step = 1.5  # Paused state
+            else:
+                st.session_state.auto_chain_step = 2
+            st.rerun()
+    elif current_step == 1.5:
+        st.warning("⏸️ Paused for review")
+        if st.button("▶️ Continue to Phase Breakdown", key="continue_after_os"):
+            st.session_state.auto_chain_step = 2
+            st.rerun()
+    elif current_step > 1:
+        st.success("✓ Blueprint complete")
+
+    # Step 3: Phase Breakdown
+    st.markdown("##### Step 3: Phase Breakdown")
+    if current_step == 2:
+        phase_prompt = get_pipeline_setting_with_default(
+            db, user_id, "phase_breakdown_prompt", project.id if project else None
+        )
+        st.code(phase_prompt[:500] + "..." if len(phase_prompt) > 500 else phase_prompt)
+
+        if st.button("📋 Copy Phase Breakdown Prompt", key="copy_phases"):
+            st.session_state.auto_chain_prompts["phases"] = phase_prompt
+            st.toast("Copied! Send this to your AI agent.")
+
+        if st.button("✅ Mark Phases Complete", key="mark_phases_done"):
+            if pause_after_phases:
+                show_info("Pausing for review (pause_after_phases enabled)")
+                st.session_state.auto_chain_step = 2.5
+            else:
+                st.session_state.auto_chain_step = 3
+            st.rerun()
+    elif current_step == 2.5:
+        st.warning("⏸️ Paused for review")
+        if st.button("▶️ Continue to Build", key="continue_after_phases"):
+            st.session_state.auto_chain_step = 3
+            st.rerun()
+    elif current_step > 2:
+        st.success("✓ Phases complete")
+
+    # Step 4: Build
+    st.markdown("##### Step 4: Build")
+    if current_step >= 3:
+        if pause_before_build and current_step == 3:
+            st.warning("⏸️ Paused before build (pause_before_build enabled)")
+            if st.button("▶️ Start Build", key="start_build"):
+                st.session_state.auto_chain_step = 4
+                st.rerun()
+        elif current_step >= 4:
+            st.success("✓ Ready to build! Use Roundtable Coder to execute.")
+    else:
+        st.caption("Complete previous steps first")
+
+    # Reset button
+    st.divider()
+    if st.button("🔄 Reset Workflow", key="reset_auto_chain"):
+        st.session_state.auto_chain_step = 0
+        st.session_state.auto_chain_prompts = {}
+        st.rerun()
+
+    # Link to settings
+    st.caption("Edit prompts and toggles in the Qualification panel settings tab")
 
 
 def render_gap_analysis_view(

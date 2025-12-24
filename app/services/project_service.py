@@ -35,7 +35,8 @@ def create_project(
     db: Session,
     name: str,
     owner_id: int,
-    description: Optional[str] = None
+    description: Optional[str] = None,
+    github_repo: Optional[str] = None
 ) -> Project:
     """
     Create a new project.
@@ -45,6 +46,7 @@ def create_project(
         name: Project name
         owner_id: Owner user ID
         description: Optional project description
+        github_repo: Optional GitHub repo in format "owner/repo-name"
 
     Returns:
         Created Project
@@ -53,7 +55,8 @@ def create_project(
     project = repo.create_project(
         name=name,
         owner_id=owner_id,
-        description=description
+        description=description,
+        github_repo=github_repo
     )
 
     # Create default context for the project
@@ -83,7 +86,8 @@ def update_project(
     project_id: int,
     name: Optional[str] = None,
     description: Optional[str] = None,
-    is_archived: Optional[bool] = None
+    is_archived: Optional[bool] = None,
+    github_repo: Optional[str] = None
 ) -> Optional[Project]:
     """
     Update project fields.
@@ -94,6 +98,7 @@ def update_project(
         name: New name (optional)
         description: New description (optional)
         is_archived: Archive status (optional)
+        github_repo: GitHub repo in format "owner/repo-name" (optional)
 
     Returns:
         Updated Project or None
@@ -110,6 +115,8 @@ def update_project(
         project.description = description
     if is_archived is not None:
         project.is_archived = is_archived
+    if github_repo is not None:
+        project.github_repo = github_repo
 
     return repo.update(project)
 
