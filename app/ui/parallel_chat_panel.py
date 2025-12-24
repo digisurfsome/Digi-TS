@@ -218,7 +218,7 @@ def render_parallel_chat_panel(db: Session) -> None:
                         f"#{agent_idx + 1}",
                         model_names,
                         index=model_idx,
-                        key=f"agent_model_{agent_idx}"
+                        key=f"parallel_agent_model_{agent_idx}_{row_start}"
                     )
 
                     if new_model != current_model:
@@ -228,7 +228,7 @@ def render_parallel_chat_panel(db: Session) -> None:
                     label = st.text_input(
                         "Label",
                         value=agent.get("label", f"Agent {agent_idx + 1}"),
-                        key=f"agent_label_{agent_idx}",
+                        key=f"parallel_agent_label_{agent_idx}_{row_start}",
                         label_visibility="collapsed"
                     )
                     st.session_state.parallel_agents[agent_idx]["label"] = label
