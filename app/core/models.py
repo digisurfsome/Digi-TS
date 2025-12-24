@@ -123,6 +123,7 @@ class Project(Base, TimestampMixin):
     description: Mapped[Optional[str]] = mapped_column(Text)
     owner_id: Mapped[int] = mapped_column(ForeignKey("user_profiles.id"), nullable=False, index=True)
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    github_repo: Mapped[Optional[str]] = mapped_column(String(255))  # format: "owner/repo-name"
     tags: Mapped[Optional[list]] = mapped_column(JSON)  # Array of tags
     extra_metadata: Mapped[Optional[dict]] = mapped_column("metadata", JSON)  # Additional project metadata
 

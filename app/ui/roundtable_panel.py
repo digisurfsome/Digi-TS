@@ -625,6 +625,11 @@ def render_github_section(db, service: RoundtableService, session: RoundtableSes
     # Get GitHub token from settings
     github_token = get_setting(db, "GITHUB_TOKEN") or ""
 
+    # Get project's github_repo for auto-fill
+    project_repo = None
+    if session.project:
+        project_repo = session.project.github_repo
+
     with st.expander("GitHub Settings", expanded=False):
         token_input = st.text_input(
             "GitHub Token",
@@ -643,19 +648,26 @@ def render_github_section(db, service: RoundtableService, session: RoundtableSes
                 show_warning(f"Token validation failed: {validation['error']}")
 
     if not github_token:
-        show_info("Add a GitHub token in settings to enable GitHub features.")
+        show_info("Add a GitHub token in Settings tab to enable GitHub features.")
         return
 
     github = GitHubService(github_token)
+
+    # Show project repo status
+    if project_repo:
+        st.success(f"📁 Project repo: **{project_repo}**")
+    else:
+        st.info("💡 Set a GitHub repo in Project Settings (sidebar) to auto-fill here.")
 
     col1, col2 = st.columns(2)
 
     with col1:
         repo = st.text_input(
             "Repository",
+            value=project_repo or "",
             placeholder="owner/repo",
             key="github_repo",
-            help="Format: username/repository"
+            help="Format: username/repository (auto-filled from project settings)"
         )
 
     with col2:
