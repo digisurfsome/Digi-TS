@@ -17,6 +17,7 @@ from app.core.db import (
     test_connection,
     initialize_schema,
     check_tables_exist,
+    run_migrations,
     get_db,
 )
 from app.ui.layout import (
@@ -404,6 +405,9 @@ def main():
 
         render_footer()
         return
+
+    # Run migrations to add any new columns/tables to existing schema
+    run_migrations()
 
     # Main application with user/project selection
     with st.sidebar:
