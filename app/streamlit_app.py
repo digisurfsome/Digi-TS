@@ -51,6 +51,7 @@ from app.ui.idea_bank_panel import (
     render_warmup_modal,
     render_idea_bank_panel,
 )
+from app.ui.parallel_chat_panel import render_parallel_chat_panel
 from app.services import (
     get_or_create_default_user,
     list_all_users,
@@ -555,8 +556,8 @@ def main():
                     show_error("Project not found")
         else:
             # Standard tabs mode - Reordered: Roundtable first, System Status last
-            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs(
-                ["🔄 Roundtable", "🎨 Design Tree", "🤖 Agent OS", "📋 Project Context", "📄 Truth Doc", "💡 Idea Bank", "🧪 Lab Mode", "📊 Process Log", "⚙️ Settings", "🏠 System Status"]
+            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs(
+                ["🔄 Roundtable", "⚡ Parallel", "🎨 Design Tree", "🤖 Agent OS", "📋 Project Context", "📄 Truth Doc", "💡 Idea Bank", "🧪 Lab Mode", "📊 Process Log", "⚙️ Settings", "🏠 System Status"]
             )
 
             with tab1:
@@ -566,6 +567,11 @@ def main():
                     render_roundtable_panel(db, project_id=project_id)
 
             with tab2:
+                # Parallel Multi-Agent Chat - query multiple models at once
+                with get_db() as db:
+                    render_parallel_chat_panel(db)
+
+            with tab3:
                 if st.session_state.get("current_project_id"):
                     with get_db() as db:
                         from app.services import get_project_by_id
@@ -578,7 +584,7 @@ def main():
                 else:
                     st.info("📁 Select or create a project to manage design tree.")
 
-            with tab3:
+            with tab4:
                 # Agent OS - Transform rants into structured specs
                 if st.session_state.get("current_project_id"):
                     with get_db() as db:
@@ -593,7 +599,7 @@ def main():
                 else:
                     st.info("📁 Select or create a project to use Agent OS.")
 
-            with tab4:
+            with tab5:
                 if st.session_state.get("current_project_id"):
                     with get_db() as db:
                         from app.services import get_project_by_id
@@ -606,7 +612,7 @@ def main():
                 else:
                     st.info("📁 Select or create a project to manage context.")
 
-            with tab5:
+            with tab6:
                 if st.session_state.get("current_project_id"):
                     with get_db() as db:
                         from app.services import get_project_by_id
@@ -619,7 +625,7 @@ def main():
                 else:
                     st.info("📁 Select or create a project to export Truth Doc.")
 
-            with tab6:
+            with tab7:
                 # Idea Bank - Phase 5 Learning & Memory
                 if st.session_state.get("current_project_id"):
                     with get_db() as db:
@@ -633,7 +639,7 @@ def main():
                 else:
                     st.info("📁 Select or create a project to use Idea Bank.")
 
-            with tab7:
+            with tab8:
                 # Lab Mode - Test different feature combinations
                 if st.session_state.get("current_project_id"):
                     with get_db() as db:
@@ -647,18 +653,18 @@ def main():
                 else:
                     st.info("📁 Select or create a project to use Lab Mode.")
 
-            with tab8:
+            with tab9:
                 from app.services import render_process_log
                 render_process_log()
 
-            with tab9:
+            with tab10:
                 if "current_user" in locals() and current_user:
                     with get_db() as db:
                         render_settings_ui(db, user_id=None)
                 else:
                     st.info("Select a user to configure settings.")
 
-            with tab10:
+            with tab11:
                 render_system_status()
 
     # Render footer
