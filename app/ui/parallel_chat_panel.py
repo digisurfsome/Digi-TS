@@ -250,23 +250,23 @@ def render_parallel_chat_panel(db: Session) -> None:
     btn_col1, btn_col2, btn_col3, btn_col4 = st.columns([1, 1, 1, 2])
 
     with btn_col1:
-        send_btn = st.button("🚀 Send to All", type="primary", use_container_width=True)
+        send_btn = st.button("🚀 Send to All", type="primary", use_container_width=True, key="parallel_send_all")
 
     with btn_col2:
-        clear_btn = st.button("🗑️ Clear", use_container_width=True)
+        clear_btn = st.button("🗑️ Clear", use_container_width=True, key="parallel_clear")
 
     with btn_col3:
         # Action preset dropdown
         action = st.selectbox(
             "Action",
             ["Select Action..."] + list(ACTION_PRESETS.keys()),
-            key="action_preset",
+            key="parallel_action_preset",
             label_visibility="collapsed"
         )
 
     with btn_col4:
         if action != "Select Action...":
-            if st.button(f"▶️ {action}", key="run_action"):
+            if st.button(f"▶️ {action}", key="parallel_run_action"):
                 # Run cross-agent action
                 _run_cross_agent_action(db, action, anthropic_key, openai_key, google_key)
 
