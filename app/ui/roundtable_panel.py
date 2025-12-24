@@ -30,6 +30,11 @@ from app.services.github_service import GitHubService, validate_github_token
 from app.services import get_setting
 import json
 from app.ui.layout import show_success, show_error, show_warning, show_info
+from app.ui.qualification_panel import (
+    render_qualification_status_badge,
+    render_auto_qualify_button,
+)
+from app.services.agent_qualification_service import AgentQualificationService
 
 # Memory System imports (Phase 2)
 try:
@@ -1000,10 +1005,10 @@ def render_memory_status(service: RoundtableService, session: RoundtableSession)
 # =============================================================================
 
 def render_tools_section(db, service: RoundtableService, session: RoundtableSession):
-    """Render tools section with baton, GitHub, stats, memory, etc."""
+    """Render tools section with baton, GitHub, stats, memory, qualification."""
     st.markdown("**🛠️ Tools**")
 
-    tab1, tab2, tab3, tab4 = st.tabs(["📦 Baton", "🧠 Memory", "🐙 GitHub", "📊 Stats"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📦 Baton", "🧠 Memory", "🐙 GitHub", "📊 Stats", "🧪 Qualify"])
 
     with tab1:
         render_baton_section(service, session)
@@ -1016,3 +1021,98 @@ def render_tools_section(db, service: RoundtableService, session: RoundtableSess
 
     with tab4:
         render_session_stats(service, session)
+
+    with tab5:
+        render_qualification_section(db, service, session)
+
+
+def render_qualification_section(db, service: RoundtableService, session: RoundtableSession):
+    """Render agent qualification section for the roundtable."""
+    from app.services.pipeline_settings_service import (
+        get_pipeline_setting_with_default,
+        get_toggle,
+    )
+
+    # Get user_id from session (via project)
+    user_id = 1  # Default for now, should come from session context
+
+    st.markdown("**Agent Qualification (LIMB Test)**")
+
+    # Show current qualification status
+    if session.project_id:
+        render_qualification_status_badge(db, user_id, session.project_id)
+
+    st.divider()
+
+    # Initialize qualification service
+    openai_key = get_setting(db, "OPENAI_API_KEY")
+    qual_service = AgentQualificationService(db=db, openai_key=openai_key)
+
+    # Session state for qualification test
+    qual_key = f"qual_test_{session.id}"
+    if qual_key not in st.session_state:
+        st.session_state[qual_key] = {
+            "test_prompt": None,
+            "metadata": None,
+            "response": None,
+            "result": None,
+        }
+
+    qual_state = st.session_state[qual_key]
+
+    # Generate test button
+    if st.button("🎲 Generate Test", key=f"gen_qual_{session.id}", use_container_width=True):
+        test_prompt, metadata = qual_service.generate_test()
+        qual_state["test_prompt"] = test_prompt
+        qual_state["metadata"] = metadata
+        qual_state["response"] = None
+        qual_state["result"] = None
+        st.rerun()
+
+    # Show test prompt
+    if qual_state["test_prompt"]:
+        st.markdown("**Test Prompt:**")
+        st.code(qual_state["test_prompt"][:500] + "..." if len(qual_state["test_prompt"]) > 500 else qual_state["test_prompt"])
+
+        # Response input
+        response = st.text_area(
+            "Paste agent response:",
+            height=150,
+            key=f"qual_response_{session.id}"
+        )
+
+        if st.button("🔍 Evaluate", key=f"eval_qual_{session.id}", disabled=not response):
+            result = qual_service.evaluate(response, qual_state["metadata"])
+            qual_state["response"] = response
+            qual_state["result"] = result
+
+            # Save to database
+            if session.project_id:
+                from app.ui.qualification_panel import save_qualification_result
+                save_qualification_result(
+                    db, user_id, session.project_id,
+                    qual_state["test_prompt"],
+                    qual_state["metadata"],
+                    response, result
+                )
+
+            st.rerun()
+
+    # Show result
+    if qual_state["result"]:
+        result = qual_state["result"]
+        badge = qual_service.get_result_badge(result)
+
+        st.markdown(f"**Result: {badge}**")
+        st.write(f"Score: {result.get('total_score', 0)}/7")
+
+        if result.get("critical_fail"):
+            st.error("⚠️ Critical failure - agent should not be trusted")
+
+        # Auto-retry toggle
+        auto_retry = get_toggle(db, user_id, "auto_retry_on_fail", session.project_id)
+        if auto_retry and not qual_service.is_qualified(result):
+            st.warning("Auto-retry enabled - generate new test for fresh agent")
+
+    # Link to full qualification panel
+    st.caption("For full settings, see the Qualification tab in Agent OS panel")
