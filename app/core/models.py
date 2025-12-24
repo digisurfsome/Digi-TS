@@ -816,3 +816,117 @@ class SessionActivity(Base, TimestampMixin):
 
     def __repr__(self):
         return f"<SessionActivity(id={self.id}, user={self.user_id}, project={self.project_id}, last_active={self.last_active})>"
+
+
+class QualificationStatus(str, enum.Enum):
+    """Status of agent qualification."""
+    PENDING = "PENDING"  # Test in progress
+    GO = "GO"  # Full trust
+    GO_WITH_CHECKS = "GO_WITH_CHECKS"  # Good but verify
+    SIMPLE_ONLY = "SIMPLE_ONLY"  # Basic tasks only
+    SKIP = "SKIP"  # Failed, need new instance
+    CRITICAL_FAIL = "CRITICAL_FAIL"  # Hallucinated or missed contradictions
+
+
+class AgentQualification(Base):
+    """
+    Tracks agent qualification test attempts.
+
+    Records each LIMB test run, including the test prompt, response,
+    evaluation results, and final status.
+    """
+    __tablename__ = "agent_qualifications"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user_profiles.id"), nullable=False, index=True)
+
+    # Agent identification
+    agent_type: Mapped[str] = mapped_column(String(50), nullable=False)  # roundtable, chat, etc.
+    agent_model: Mapped[Optional[str]] = mapped_column(String(100))  # claude-3, gpt-4, etc.
+    agent_session_id: Mapped[Optional[str]] = mapped_column(String(255))  # Session/instance ID
+
+    # Test content
+    test_prompt: Mapped[Optional[str]] = mapped_column(Text)
+    test_metadata: Mapped[Optional[dict]] = mapped_column(JSON)  # fake_tech, contradiction, etc.
+    agent_response: Mapped[Optional[str]] = mapped_column(Text)
+
+    # Evaluation results
+    status: Mapped[QualificationStatus] = mapped_column(
+        SQLEnum(QualificationStatus),
+        default=QualificationStatus.PENDING,
+        nullable=False
+    )
+    total_score: Mapped[Optional[int]] = mapped_column(Integer)
+    passes: Mapped[Optional[int]] = mapped_column(Integer)
+    concerns: Mapped[Optional[int]] = mapped_column(Integer)
+    fails: Mapped[Optional[int]] = mapped_column(Integer)
+    critical_fail: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    task_results: Mapped[Optional[list]] = mapped_column(JSON)  # Detailed per-task results
+    evaluation_summary: Mapped[Optional[str]] = mapped_column(Text)
+
+    # Retry tracking
+    attempt_number: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    previous_attempt_id: Mapped[Optional[int]] = mapped_column(ForeignKey("agent_qualifications.id"))
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    evaluated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+    # Relationships
+    project: Mapped["Project"] = relationship("Project")
+    user: Mapped["UserProfile"] = relationship("UserProfile")
+
+    def __repr__(self):
+        return f"<AgentQualification(id={self.id}, status={self.status}, score={self.total_score})>"
+
+
+class PipelineSettings(Base):
+    """
+    Stores editable prompts and toggles for the agent pipeline.
+
+    This includes:
+    - LIMB test questions
+    - Evaluation criteria
+    - Codebase exploration prompt
+    - Agent OS blueprint prompt
+    - Phase breakdown prompt
+    - Pipeline toggles (pause after each stage)
+    """
+    __tablename__ = "pipeline_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user_profiles.id"), nullable=False, index=True)
+    project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id"), index=True)  # Optional, for project-specific
+
+    # Setting identification
+    setting_key: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    setting_value: Mapped[Optional[str]] = mapped_column(Text)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    # Relationships
+    user: Mapped["UserProfile"] = relationship("UserProfile")
+    project: Mapped[Optional["Project"]] = relationship("Project")
+
+    def __repr__(self):
+        return f"<PipelineSettings(id={self.id}, key={self.setting_key})>"
+
+
+# Pipeline setting keys (for reference)
+PIPELINE_SETTING_KEYS = [
+    "limb_test_prompt",  # The 7-task test prompt
+    "limb_eval_criteria",  # Evaluation criteria
+    "codebase_exploration_prompt",  # Warmup prompt
+    "agent_os_blueprint_prompt",  # Create blueprint from conversation
+    "phase_breakdown_prompt",  # Break blueprint into phases
+    "phase_test_prompt",  # How to test each phase
+    "integration_test_prompt",  # Final integration test
+    "pause_after_agent_os",  # Toggle: pause after Agent OS blueprint
+    "pause_after_phases",  # Toggle: pause after phase breakdown
+    "pause_before_build",  # Toggle: pause before starting build
+    "auto_retry_on_fail",  # Toggle: auto-retry failed qualifications
+    "max_retry_attempts",  # Max retries before giving up
+]

@@ -190,6 +190,44 @@ from app.services.conductor_service import (
     create_conductor,
 )
 
+# Agent Qualification Service (LIMB Test)
+from app.services.agent_qualification_service import (
+    # Enums
+    QualificationResult,
+    PhaseStatus,
+    # Constants
+    SCORE_PASS,
+    SCORE_CONCERN,
+    SCORE_FAIL,
+    # Test variants
+    FAKE_TECH_VARIANTS,
+    CONTRADICTION_VARIANTS,
+    # Functions
+    generate_qualification_test,
+    evaluate_response_local,
+    evaluate_response_with_ai,
+    # Main class
+    AgentQualificationService,
+)
+
+# Pipeline Settings Service
+from app.services.pipeline_settings_service import (
+    # Default prompts
+    DEFAULT_CODEBASE_EXPLORATION_PROMPT,
+    DEFAULT_AGENT_OS_BLUEPRINT_PROMPT,
+    DEFAULT_PHASE_BREAKDOWN_PROMPT,
+    DEFAULT_PHASE_TEST_PROMPT,
+    DEFAULT_INTEGRATION_TEST_PROMPT,
+    # Functions
+    get_pipeline_setting,
+    set_pipeline_setting,
+    get_all_pipeline_settings,
+    get_pipeline_setting_with_default,
+    get_toggle,
+    set_toggle,
+    initialize_default_settings,
+)
+
 __all__ = [
     # User service
     "get_or_create_default_user",
@@ -333,4 +371,29 @@ __all__ = [
     "ConductorResult",
     "ConductorService",
     "create_conductor",
+    # Agent Qualification Service (LIMB Test)
+    "QualificationResult",
+    "PhaseStatus",
+    "SCORE_PASS",
+    "SCORE_CONCERN",
+    "SCORE_FAIL",
+    "FAKE_TECH_VARIANTS",
+    "CONTRADICTION_VARIANTS",
+    "generate_qualification_test",
+    "evaluate_response_local",
+    "evaluate_response_with_ai",
+    "AgentQualificationService",
+    # Pipeline Settings Service
+    "DEFAULT_CODEBASE_EXPLORATION_PROMPT",
+    "DEFAULT_AGENT_OS_BLUEPRINT_PROMPT",
+    "DEFAULT_PHASE_BREAKDOWN_PROMPT",
+    "DEFAULT_PHASE_TEST_PROMPT",
+    "DEFAULT_INTEGRATION_TEST_PROMPT",
+    "get_pipeline_setting",
+    "set_pipeline_setting",
+    "get_all_pipeline_settings",
+    "get_pipeline_setting_with_default",
+    "get_toggle",
+    "set_toggle",
+    "initialize_default_settings",
 ]
