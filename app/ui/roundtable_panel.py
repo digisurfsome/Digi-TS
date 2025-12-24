@@ -330,138 +330,153 @@ def render_session_settings(service: RoundtableService, session: RoundtableSessi
 
 
 def render_rounds_section(service: RoundtableService, session: RoundtableSession):
-    """Render rounds management section."""
-    col1, col2 = st.columns([3, 1])
+    """Render rounds management section - COMPACT."""
+    # Single row: Rounds label + Add button + Round selector (if multiple)
+    if not session.rounds:
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.markdown("**🔄 Rounds**")
+        with col2:
+            if st.button("➕ Add Round", key="add_round_btn", use_container_width=True):
+                service.add_round(session.id)
+                st.rerun()
+        st.caption("No rounds yet. Click 'Add Round' to create one.")
+        return
+
+    # Compact header row with round info inline
+    col1, col2, col3 = st.columns([1.5, 2.5, 1])
 
     with col1:
         st.markdown("**🔄 Rounds**")
 
     with col2:
-        if st.button("➕ Add Round", key="add_round_btn"):
+        # If multiple rounds, show selector; otherwise just show the round name
+        if len(session.rounds) > 1:
+            round_names = [f"{r.name} {'✅' if r.status == 'completed' else '⏳'}" for r in session.rounds]
+            selected_idx = st.selectbox(
+                "Round", options=range(len(round_names)),
+                format_func=lambda i: round_names[i],
+                key="round_selector", label_visibility="collapsed"
+            )
+            round_obj = session.rounds[selected_idx]
+        else:
+            round_obj = session.rounds[0]
+            status_emoji = "✅" if round_obj.status == "completed" else "⏳"
+            st.markdown(f"**{status_emoji} {round_obj.name}**")
+
+    with col3:
+        if st.button("➕ Add", key="add_round_btn", use_container_width=True):
             service.add_round(session.id)
             st.rerun()
 
-    if not session.rounds:
-        show_info("No rounds yet. Click 'Add Round' to create one.")
-        return
-
-    # Render each round as a card
-    for round_obj in session.rounds:
-        render_round_card(service, session, round_obj)
+    # Render the selected/only round (compact)
+    render_round_card_compact(service, session, round_obj)
 
 
-def render_round_card(
+def render_round_card_compact(
     service: RoundtableService,
     session: RoundtableSession,
     round_obj: RoundtableRound
 ):
-    """Render a single round card."""
-    status_emoji = {
-        "pending": "⏳",
-        "running": "🔄",
-        "completed": "✅"
-    }.get(round_obj.status, "❓")
+    """Render a single round card - COMPACT version."""
+    # Task Prompt with delete button inline
+    col1, col2 = st.columns([6, 1])
+    with col1:
+        st.caption("Task Prompt")
+    with col2:
+        if st.button("🗑️", key=f"delete_round_{round_obj.id}", help="Delete round"):
+            service.delete_round(round_obj.id)
+            st.rerun()
 
-    with st.container():
-        st.markdown(f"### {status_emoji} {round_obj.name}")
+    task_prompt = st.text_area(
+        "Task Prompt",
+        value=round_obj.task_prompt or "",
+        height=70,
+        key=f"task_prompt_{round_obj.id}",
+        placeholder="Describe what the builder should create...",
+        label_visibility="collapsed"
+    )
 
-        col1, col2 = st.columns([4, 1])
+    if task_prompt != (round_obj.task_prompt or ""):
+        service.update_round(round_obj.id, task_prompt=task_prompt)
 
-        with col2:
-            if st.button("🗑️", key=f"delete_round_{round_obj.id}", help="Delete round"):
-                service.delete_round(round_obj.id)
-                st.rerun()
-
-        # Task Prompt
-        task_prompt = st.text_area(
-            "Task Prompt",
-            value=round_obj.task_prompt or "",
-            height=100,
-            key=f"task_prompt_{round_obj.id}",
-            placeholder="Describe what the builder should create..."
-        )
-
-        if task_prompt != (round_obj.task_prompt or ""):
-            service.update_round(round_obj.id, task_prompt=task_prompt)
-
-        # Agents Section
-        render_agents_section(service, round_obj)
+    # Agents Section - compact
+    render_agents_section_compact(service, round_obj)
 
 
-def render_agents_section(service: RoundtableService, round_obj: RoundtableRound):
-    """Render agents section within a round card."""
-    col1, col2 = st.columns([3, 1])
+def render_agents_section_compact(service: RoundtableService, round_obj: RoundtableRound):
+    """Render agents section - COMPACT version."""
+    # Header row with Agents label and + button inline
+    col1, col2 = st.columns([5, 1])
 
     with col1:
-        st.markdown("**Agents**")
+        st.caption(f"Agents ({len(round_obj.agents)})" if round_obj.agents else "Agents")
 
     with col2:
-        if st.button("➕ Agent", key=f"add_agent_{round_obj.id}"):
-            # Add default builder agent
+        if st.button("➕", key=f"add_agent_{round_obj.id}", help="Add agent"):
             default_model = list(AVAILABLE_MODELS.keys())[0]
             service.add_agent(round_obj.id, default_model, "builder")
             st.rerun()
 
     if not round_obj.agents:
-        st.caption("No agents configured. Add at least one builder agent.")
+        st.caption("Add at least one builder agent.")
         return
 
-    # Render each agent
+    # Render agents in a tighter grid
     for idx, agent in enumerate(round_obj.agents):
-        render_agent_row(service, agent, idx + 1)
+        render_agent_row_compact(service, agent, idx + 1)
 
 
-def render_agent_row(service: RoundtableService, agent: RoundtableAgent, index: int):
-    """Render a single agent configuration row."""
-    col1, col2, col3, col4 = st.columns([1, 3, 2, 1])
+def render_agents_section(service: RoundtableService, round_obj: RoundtableRound):
+    """Render agents section within a round card - legacy."""
+    render_agents_section_compact(service, round_obj)
+
+
+def render_agent_row_compact(service: RoundtableService, agent: RoundtableAgent, index: int):
+    """Render a single agent configuration row - COMPACT."""
+    # Tighter columns: number, model, role, delete
+    col1, col2, col3, col4 = st.columns([0.3, 2.5, 1.5, 0.4])
 
     with col1:
-        st.markdown(f"**{index}.**")
+        st.caption(f"{index}.")
 
     with col2:
-        # Model selector
         current_model = service.get_model_display_name(agent.model)
         model_options = list(AVAILABLE_MODELS.keys())
-
         try:
             current_idx = model_options.index(current_model)
         except ValueError:
             current_idx = 0
 
         selected_model = st.selectbox(
-            "Model",
-            options=model_options,
-            index=current_idx,
-            key=f"agent_model_{agent.id}",
-            label_visibility="collapsed"
+            "Model", options=model_options, index=current_idx,
+            key=f"agent_model_{agent.id}", label_visibility="collapsed"
         )
-
         if selected_model != current_model:
             service.update_agent(agent.id, model_name=selected_model)
             st.rerun()
 
     with col3:
-        # Role selector
         role_options = list(AGENT_ROLES.keys())
         current_role_idx = role_options.index(agent.role.value) if agent.role.value in role_options else 0
-
         selected_role = st.selectbox(
-            "Role",
-            options=role_options,
-            index=current_role_idx,
-            key=f"agent_role_{agent.id}",
-            label_visibility="collapsed",
+            "Role", options=role_options, index=current_role_idx,
+            key=f"agent_role_{agent.id}", label_visibility="collapsed",
             format_func=lambda x: get_role_badge(AgentRole(x))
         )
-
         if selected_role != agent.role.value:
             service.update_agent(agent.id, role=selected_role)
             st.rerun()
 
     with col4:
-        if st.button("❌", key=f"remove_agent_{agent.id}", help="Remove agent"):
+        if st.button("✕", key=f"remove_agent_{agent.id}", help="Remove"):
             service.delete_agent(agent.id)
             st.rerun()
+
+
+def render_agent_row(service: RoundtableService, agent: RoundtableAgent, index: int):
+    """Render a single agent configuration row - legacy."""
+    render_agent_row_compact(service, agent, index)
 
 
 def render_execution_section(service: RoundtableService, session: RoundtableSession):
