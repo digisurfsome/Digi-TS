@@ -1311,6 +1311,19 @@ def render_chat_panel(
     with col3:
         baton_button = st.button("🎯 Baton", use_container_width=True)
 
+    # Token Usage Meter (Item 5)
+    max_tokens = int(settings.get("max_context_tokens", "128000"))
+    render_token_meter(db, chat_session.id, max_tokens)
+
+    # Show warm-up checkbox (Item 7)
+    show_warmup = st.checkbox(
+        "Show warm-up",
+        value=st.session_state.get("show_warmup_messages", False),
+        key="show_warmup_checkbox",
+        help="Show/hide warmup messages in the chat"
+    )
+    st.session_state.show_warmup_messages = show_warmup
+
     # Handle clear
     if clear_button:
         clear_chat_history(db, chat_session.id)
