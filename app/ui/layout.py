@@ -48,7 +48,15 @@ def inject_compact_css() -> None:
     """
     st.markdown("""
     <style>
-    /* AGGRESSIVE: Remove ALL top space - ZERO GAP */
+    /* NUCLEAR OPTION: Remove ALL top space - ZERO GAP */
+
+    /* Target the root html/body */
+    html, body, [data-testid="stAppViewContainer"], .main, .block-container {
+        margin-top: 0 !important;
+        padding-top: 0 !important;
+    }
+
+    /* The main block container */
     .main .block-container {
         padding-top: 0 !important;
         padding-bottom: 0 !important;
@@ -56,14 +64,18 @@ def inject_compact_css() -> None:
         max-width: 100% !important;
     }
 
-    /* Hide ALL Streamlit chrome */
-    header[data-testid="stHeader"] {
+    /* Hide ALL Streamlit chrome - header, menus, decorations */
+    header[data-testid="stHeader"],
+    [data-testid="stHeader"],
+    [data-testid="stDecoration"],
+    [data-testid="stStatusWidget"],
+    .stDeployButton,
+    #MainMenu,
+    footer {
         display: none !important;
         height: 0 !important;
+        visibility: hidden !important;
     }
-    #MainMenu {display: none !important;}
-    footer {display: none !important;}
-    .stDeployButton {display: none !important;}
 
     /* Remove top margin from first elements */
     .main > div:first-child {
@@ -73,6 +85,22 @@ def inject_compact_css() -> None:
 
     /* Target the app view container - ZERO top space */
     .appview-container {
+        margin-top: 0 !important;
+        padding-top: 0 !important;
+    }
+
+    /* The stApp root container */
+    .stApp {
+        margin-top: 0 !important;
+        padding-top: 0 !important;
+        top: 0 !important;
+    }
+
+    /* Target nested containers */
+    .stApp > div:first-child,
+    .stApp > section,
+    [data-testid="stAppViewContainer"] > div,
+    [data-testid="stAppViewContainer"] > section {
         margin-top: 0 !important;
         padding-top: 0 !important;
     }
@@ -88,6 +116,22 @@ def inject_compact_css() -> None:
         margin-top: 0 !important;
     }
 
+    /* Target the main content wrapper */
+    [data-testid="stMain"] {
+        padding-top: 0 !important;
+        margin-top: 0 !important;
+    }
+
+    [data-testid="stMain"] > div:first-child {
+        padding-top: 0 !important;
+        margin-top: 0 !important;
+    }
+
+    /* Target the bottom container (sometimes has padding) */
+    [data-testid="stBottomBlockContainer"] {
+        padding-top: 0 !important;
+    }
+
     /* Target stVerticalBlock to remove top gap */
     [data-testid="stVerticalBlock"] {
         gap: 0.25rem !important;
@@ -100,10 +144,6 @@ def inject_compact_css() -> None:
 
     section[data-testid="stSidebar"] {
         top: 0 !important;
-    }
-
-    .stApp {
-        margin-top: 0 !important;
         padding-top: 0 !important;
     }
 
@@ -115,6 +155,11 @@ def inject_compact_css() -> None:
     /* Remove any toolbar/header gaps */
     .stToolbar {
         display: none !important;
+    }
+
+    /* Target iframe wrappers */
+    iframe[title="streamlit"] {
+        margin-top: 0 !important;
     }
 
     /* Tighter tab styling */
