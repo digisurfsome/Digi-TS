@@ -135,6 +135,22 @@ def inject_compact_css() -> None:
         margin-bottom: 0.25rem !important;
     }
 
+    /* Fix cursor for selectbox dropdowns - show pointer instead of text cursor */
+    .stSelectbox [data-baseweb="select"],
+    .stSelectbox [data-baseweb="select"] * {
+        cursor: pointer !important;
+    }
+    .stSelectbox svg {
+        cursor: pointer !important;
+    }
+    [data-baseweb="select"] [data-baseweb="icon"] {
+        cursor: pointer !important;
+    }
+    [data-baseweb="popover"] [role="listbox"],
+    [data-baseweb="popover"] [role="option"] {
+        cursor: pointer !important;
+    }
+
     /* Remove markdown paragraph margins */
     .stMarkdown p {
         margin-bottom: 0.25rem !important;
