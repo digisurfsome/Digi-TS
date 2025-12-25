@@ -45,14 +45,120 @@ def init_compact_state():
         st.session_state.current_exchange_id = 0
 
 
+def generate_exchange_summary(prompt: str, responses: Dict[str, Dict]) -> List[str]:
+    """
+    Generate choppy bullet-point summary of an exchange.
+    Auto-tags what was discussed for quick scanning.
+
+    Returns list of short bullet points.
+    """
+    bullets = []
+
+    # Extract key info from prompt
+    prompt_lower = prompt.lower()
+
+    # Topic detection - what was asked about
+    topics = []
+    topic_keywords = {
+        "api": "API",
+        "auth": "Auth",
+        "database": "DB",
+        "ui": "UI",
+        "test": "Tests",
+        "bug": "Bug fix",
+        "error": "Error",
+        "feature": "Feature",
+        "refactor": "Refactor",
+        "style": "Styling",
+        "deploy": "Deploy",
+        "config": "Config",
+        "function": "Function",
+        "class": "Class",
+        "component": "Component",
+        "route": "Routing",
+        "state": "State",
+        "hook": "Hook",
+        "query": "Query",
+        "endpoint": "Endpoint",
+    }
+
+    for keyword, label in topic_keywords.items():
+        if keyword in prompt_lower:
+            topics.append(label)
+
+    # Add first detected topic or generic label
+    if topics:
+        bullets.append(f"📌 {', '.join(topics[:3])}")
+    else:
+        # Extract first few meaningful words
+        words = prompt.split()[:5]
+        short = " ".join(words)
+        if len(prompt) > len(short):
+            short += "..."
+        bullets.append(f"📌 {short}")
+
+    # Action detection - what was requested
+    actions = []
+    action_keywords = {
+        "add": "➕ Add",
+        "create": "➕ Create",
+        "build": "🔨 Build",
+        "fix": "🔧 Fix",
+        "update": "📝 Update",
+        "change": "📝 Change",
+        "remove": "❌ Remove",
+        "delete": "❌ Delete",
+        "explain": "💡 Explain",
+        "review": "👀 Review",
+        "optimize": "⚡ Optimize",
+        "debug": "🐛 Debug",
+        "implement": "🔨 Implement",
+    }
+
+    for keyword, label in action_keywords.items():
+        if keyword in prompt_lower:
+            actions.append(label)
+            break  # Just first action
+
+    if actions:
+        bullets.append(actions[0])
+
+    # Response summary - what agents said
+    if responses:
+        agent_count = len(responses)
+        total_tokens = sum(r.get("tokens", 0) for r in responses.values())
+
+        # Check if responses agree or differ
+        response_lengths = [len(r.get("content", "")) for r in responses.values()]
+        if response_lengths:
+            avg_len = sum(response_lengths) / len(response_lengths)
+            if avg_len > 1000:
+                bullets.append(f"📄 Long responses ({agent_count} agents)")
+            elif avg_len > 300:
+                bullets.append(f"📝 Medium responses ({agent_count} agents)")
+            else:
+                bullets.append(f"💬 Short responses ({agent_count} agents)")
+
+        # Token count
+        if total_tokens > 0:
+            bullets.append(f"🔢 {total_tokens:,} tokens")
+
+    return bullets[:4]  # Max 4 bullets
+
+
 def add_exchange(prompt: str, responses: Dict[str, Dict]):
-    """Add a new exchange to history."""
+    """Add a new exchange to history with auto-generated summary."""
     st.session_state.current_exchange_id += 1
+
+    # Auto-generate summary bullets
+    summary_bullets = generate_exchange_summary(prompt, responses)
+
     exchange = {
         "id": st.session_state.current_exchange_id,
         "timestamp": datetime.now().strftime("%H:%M"),
         "prompt": prompt,
         "responses": responses,
+        "summary": summary_bullets,  # Auto-generated summary
     }
     st.session_state.exchange_history.append(exchange)
     return exchange
@@ -513,26 +619,58 @@ def render_history_row():
 
 
 def render_exchange_preview(exchange: Dict, pinned: List[int]):
-    """Render exchange preview inside popover."""
+    """
+    Render exchange preview inside popover.
+    Shows auto-summary bullets FIRST for quick identification.
+    """
     ex_id = exchange["id"]
 
-    st.markdown(f"**Exchange #{ex_id}** - {exchange['timestamp']}")
+    # =========================================
+    # AUTO-SUMMARY - Shows first on hover
+    # Choppy bullet points for quick scanning
+    # =========================================
+    summary_bullets = exchange.get("summary", [])
+
+    if summary_bullets:
+        # Show summary in a highlighted box
+        for bullet in summary_bullets:
+            st.markdown(f"**{bullet}**")
+    else:
+        # Generate summary if not present (for old exchanges)
+        summary_bullets = generate_exchange_summary(
+            exchange.get("prompt", ""),
+            exchange.get("responses", {})
+        )
+        for bullet in summary_bullets:
+            st.markdown(f"**{bullet}**")
+
+    st.caption(f"#{ex_id} • {exchange['timestamp']}")
     st.divider()
 
-    # User prompt
-    prompt_preview = exchange["prompt"][:150]
-    if len(exchange["prompt"]) > 150:
-        prompt_preview += "..."
-    st.markdown(f"**You:** {prompt_preview}")
+    # =========================================
+    # DETAILS - Below the summary
+    # =========================================
 
-    st.divider()
+    # Expandable details section
+    with st.expander("📖 Full Details", expanded=False):
+        # User prompt
+        prompt_preview = exchange["prompt"][:200]
+        if len(exchange["prompt"]) > 200:
+            prompt_preview += "..."
+        st.markdown(f"**You asked:** {prompt_preview}")
 
-    # Response summaries
-    st.caption("Responses:")
-    for agent_name, resp in exchange.get("responses", {}).items():
-        status = "✅" if resp.get("status") == "done" else "⏳"
-        tokens = resp.get("tokens", 0)
-        st.caption(f"{agent_name}: {tokens} tok {status}")
+        st.caption("**Agent Responses:**")
+        for agent_name, resp in exchange.get("responses", {}).items():
+            status = "✅" if resp.get("status") == "done" else "⏳"
+            tokens = resp.get("tokens", 0)
+
+            # Show first bit of response
+            content_preview = resp.get("content", "")[:150]
+            if len(resp.get("content", "")) > 150:
+                content_preview += "..."
+
+            st.caption(f"**{agent_name}** ({tokens} tok) {status}")
+            st.text(content_preview)
 
     st.divider()
 
@@ -542,9 +680,10 @@ def render_exchange_preview(exchange: Dict, pinned: List[int]):
             st.session_state.pinned_exchanges.remove(ex_id)
             st.rerun()
     else:
-        if st.button("📌 Pin this", key=f"pin_{ex_id}"):
+        if st.button("📌 Pin to keep visible", key=f"pin_{ex_id}"):
             st.session_state.pinned_exchanges.append(ex_id)
             st.rerun()
+        st.caption("Double-click to pin")
 
 
 def render_pinned_exchanges():
@@ -567,10 +706,16 @@ def render_pinned_exchanges():
 
 
 def render_pinned_exchange_content(exchange: Dict):
-    """Render content of a pinned exchange."""
-    # Compact view of the exchange
-    st.caption(f"Prompt: {exchange['prompt'][:100]}...")
+    """Render content of a pinned exchange with summary."""
+    # Show summary first
+    summary_bullets = exchange.get("summary", [])
+    if summary_bullets:
+        bullet_text = " • ".join(summary_bullets)
+        st.markdown(f"**{bullet_text}**")
+    else:
+        st.caption(f"Prompt: {exchange['prompt'][:80]}...")
 
+    # Responses in columns
     responses = exchange.get("responses", {})
     if responses:
         cols = st.columns(len(responses))
