@@ -93,6 +93,100 @@ def inject_hover_styles_and_scripts():
         display: block;
     }
 
+    /* ========================================
+       DROPDOWN DISPLAY MODES
+       ======================================== */
+
+    /* Mode selector buttons */
+    .display-mode-selector {
+        display: inline-flex;
+        gap: 4px;
+        margin-left: 12px;
+        padding: 4px;
+        background: #1a1a1a;
+        border-radius: 6px;
+        border: 1px solid #2a2a2a;
+    }
+
+    .mode-btn {
+        width: 28px;
+        height: 22px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #2a2a2a;
+        border: 1px solid #3a3a3a;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: all 0.15s;
+        color: #666;
+        font-size: 10px;
+    }
+
+    .mode-btn:hover {
+        background: #3a3a3a;
+        border-color: #4a4a4a;
+        color: #aaa;
+    }
+
+    .mode-btn.active {
+        background: #4a9eff;
+        border-color: #4a9eff;
+        color: #fff;
+    }
+
+    /* Mode: Horizontal bar across top (━) */
+    .display-mode-horizontal .hd-panel {
+        position: fixed;
+        top: 60px;
+        left: 10px;
+        right: 10px;
+        width: auto;
+        max-width: none;
+        min-width: auto;
+        max-height: 120px;
+        border-radius: 8px;
+        display: flex;
+        flex-direction: row;
+        gap: 20px;
+        padding: 12px 20px;
+    }
+
+    .display-mode-horizontal .hd-panel .hd-section {
+        flex: 1;
+        margin: 0;
+        padding: 0 15px;
+        border-right: 1px solid #3a3a3a;
+    }
+
+    .display-mode-horizontal .hd-panel .hd-section:last-child {
+        border-right: none;
+    }
+
+    .display-mode-horizontal .hd-panel .hd-header {
+        display: none;
+    }
+
+    .display-mode-horizontal .hd-panel .hd-divider {
+        display: none;
+    }
+
+    /* Mode: Side panel on right (▭) */
+    .display-mode-side .hd-panel {
+        position: fixed;
+        top: 100px;
+        right: 10px;
+        left: auto;
+        width: 320px;
+        max-height: 400px;
+        border-radius: 10px;
+    }
+
+    /* Mode: Below/dropdown (▯) - default behavior */
+    .display-mode-below .hd-panel {
+        /* Default positioning - already set above */
+    }
+
     /* Pinned state indicator */
     .hd-container.pinned .hd-trigger {
         border-color: #4a9eff;
@@ -309,6 +403,43 @@ def inject_hover_styles_and_scripts():
             // Trigger Streamlit callback via hidden button
             const btn = document.querySelector(`button[data-pin-id="${itemId}"]`);
             if (btn) btn.click();
+        }
+    });
+
+    // Handle display mode switching
+    document.addEventListener('click', function(e) {
+        if (e.target.classList.contains('mode-btn')) {
+            const mode = e.target.dataset.mode;
+            const controlBar = document.querySelector('.hd-control-bar');
+
+            if (controlBar) {
+                // Remove all mode classes
+                controlBar.classList.remove('display-mode-horizontal', 'display-mode-side', 'display-mode-below');
+                // Add selected mode class
+                controlBar.classList.add('display-mode-' + mode);
+            }
+
+            // Update button active states
+            document.querySelectorAll('.mode-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            e.target.classList.add('active');
+
+            // Store preference
+            localStorage.setItem('dropdownDisplayMode', mode);
+        }
+    });
+
+    // Restore display mode preference on load
+    document.addEventListener('DOMContentLoaded', function() {
+        const savedMode = localStorage.getItem('dropdownDisplayMode') || 'below';
+        const controlBar = document.querySelector('.hd-control-bar');
+        if (controlBar) {
+            controlBar.classList.add('display-mode-' + savedMode);
+        }
+        const activeBtn = document.querySelector('.mode-btn[data-mode="' + savedMode + '"]');
+        if (activeBtn) {
+            activeBtn.classList.add('active');
         }
     });
     </script>

@@ -1052,6 +1052,13 @@ def render_roundtable_compact(db: Session, project_id: Optional[int] = None):
             </div>
         </div>
 
+        <!-- Display Mode Selector -->
+        <div class="display-mode-selector" title="Dropdown display position">
+            <div class="mode-btn" data-mode="horizontal" title="Horizontal bar across top">━</div>
+            <div class="mode-btn" data-mode="side" title="Side panel on right">▭</div>
+            <div class="mode-btn active" data-mode="below" title="Below buttons (default)">▯</div>
+        </div>
+
         <div style="margin-left: auto; color: {"#4ade80" if session.status.value == "active" else "#888"}; font-size: 13px;">
             {"🟢" if session.status.value == "active" else "🟡"} {session.status.value.title()}
         </div>
