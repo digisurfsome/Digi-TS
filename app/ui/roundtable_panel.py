@@ -73,6 +73,23 @@ def render_roundtable_panel(db: Session, project_id: Optional[int] = None):
         db: Database session
         project_id: Optional project ID to filter sessions
     """
+    # Layout mode toggle - Compact vs Full
+    layout_col, spacer_col = st.columns([1, 5])
+    with layout_col:
+        use_compact = st.toggle(
+            "Compact UI",
+            value=st.session_state.get("roundtable_compact_mode", False),
+            key="roundtable_layout_toggle",
+            help="Condensed layout with popover controls"
+        )
+        st.session_state.roundtable_compact_mode = use_compact
+
+    # If compact mode, render compact UI and return
+    if use_compact:
+        from app.ui.roundtable_compact import render_roundtable_compact
+        render_roundtable_compact(db, project_id)
+        return
+
     import os
 
     # Get API keys from settings OR environment variables
