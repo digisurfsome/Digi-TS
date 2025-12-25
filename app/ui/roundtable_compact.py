@@ -29,6 +29,7 @@ from app.services.roundtable_service import (
 )
 from app.services import get_setting
 from app.ui.layout import show_success, show_error, show_warning, show_info
+from app.ui.hover_components import inject_hover_styles_and_scripts
 
 
 # =============================================================================
@@ -568,11 +569,14 @@ def render_stats_popover(service: RoundtableService, session: RoundtableSession)
 
 
 # =============================================================================
-# History Row
+# History Row - HOVER BASED
 # =============================================================================
 
 def render_history_row():
-    """Render the exchange history navigation row."""
+    """
+    Render the exchange history navigation row with TRUE HOVER behavior.
+    Hover shows preview, click pins the exchange.
+    """
     exchanges = st.session_state.exchange_history
     pinned = st.session_state.pinned_exchanges
     current = st.session_state.current_exchange_id
@@ -581,41 +585,85 @@ def render_history_row():
         st.caption("History: No exchanges yet")
         return
 
-    # Calculate columns: label + exchanges + clear button
-    num_exchanges = len(exchanges)
-    max_visible = 15  # Limit visible indicators
+    # Limit to last 20 exchanges
+    visible_exchanges = exchanges[-20:]
 
-    if num_exchanges > max_visible:
-        # Show first few, ellipsis, last few
-        visible_exchanges = exchanges[-max_visible:]
-    else:
-        visible_exchanges = exchanges
+    # Build HTML for hover-based history row
+    html_parts = ['<div class="hist-row">']
+    html_parts.append('<span class="hist-label">History:</span>')
 
-    cols = st.columns([0.8] + [0.4] * len(visible_exchanges) + [1])
+    for ex in visible_exchanges:
+        ex_id = ex["id"]
 
-    with cols[0]:
-        st.caption("History:")
+        # Determine button class
+        btn_class = "hist-btn"
+        if ex_id == current:
+            btn_class += " current"
+            label = f"{ex_id}▣"
+        elif ex_id in pinned:
+            btn_class += " pinned"
+            label = f"{ex_id}●"
+        else:
+            label = str(ex_id)
 
-    for i, ex in enumerate(visible_exchanges):
-        with cols[i + 1]:
-            ex_id = ex["id"]
+        # Get summary bullets
+        summary = ex.get("summary", [])
+        if not summary:
+            summary = generate_exchange_summary(ex.get("prompt", ""), ex.get("responses", {}))
 
-            # Determine indicator style
-            if ex_id == current:
-                label = f"{ex_id}▣"
-            elif ex_id in pinned:
-                label = f"{ex_id}●"
-            else:
-                label = str(ex_id)
+        # Build the hover preview HTML
+        summary_html = ""
+        for bullet in summary:
+            summary_html += f'<span class="summary-bullet">{bullet}</span>'
 
-            # Popover for preview
-            with st.popover(label):
-                render_exchange_preview(ex, pinned)
+        prompt_preview = ex.get("prompt", "")[:100]
+        if len(ex.get("prompt", "")) > 100:
+            prompt_preview += "..."
 
-    with cols[-1]:
-        if pinned and st.button("Clear Pins", key="clear_all_pins"):
-            st.session_state.pinned_exchanges = []
-            st.rerun()
+        pin_text = "📌 Unpin" if ex_id in pinned else "📌 Pin this"
+
+        html_parts.append(f'''
+        <div class="hist-item">
+            <div class="{btn_class}">{label}</div>
+            <div class="hist-preview">
+                <div class="hist-summary">{summary_html}</div>
+                <div class="hist-meta">#{ex_id} • {ex.get("timestamp", "")}</div>
+                <div style="color: #888; font-size: 11px; margin-top: 6px;">"{prompt_preview}"</div>
+                <div class="hist-actions">
+                    <span style="font-size: 11px; color: #666;">Click below to {pin_text.split()[1]}</span>
+                </div>
+            </div>
+        </div>
+        ''')
+
+    html_parts.append('</div>')
+
+    # Render the HTML
+    st.markdown("".join(html_parts), unsafe_allow_html=True)
+
+    # Render Streamlit buttons for actual pin/unpin (small row below)
+    if visible_exchanges:
+        btn_cols = st.columns([0.5] + [0.35] * len(visible_exchanges) + [1])
+
+        with btn_cols[0]:
+            st.empty()
+
+        for i, ex in enumerate(visible_exchanges):
+            with btn_cols[i + 1]:
+                ex_id = ex["id"]
+                if ex_id in pinned:
+                    if st.button("●", key=f"hunpin_{ex_id}", help=f"Unpin #{ex_id}"):
+                        st.session_state.pinned_exchanges.remove(ex_id)
+                        st.rerun()
+                else:
+                    if st.button("○", key=f"hpin_{ex_id}", help=f"Pin #{ex_id}"):
+                        st.session_state.pinned_exchanges.append(ex_id)
+                        st.rerun()
+
+        with btn_cols[-1]:
+            if pinned and st.button("Clear Pins", key="clear_all_pins"):
+                st.session_state.pinned_exchanges = []
+                st.rerun()
 
 
 def render_exchange_preview(exchange: Dict, pinned: List[int]):
@@ -806,6 +854,9 @@ def render_roundtable_compact(db: Session, project_id: Optional[int] = None):
     # Initialize state
     init_compact_state()
 
+    # Inject hover styles for CSS-based hover dropdowns
+    inject_hover_styles_and_scripts()
+
     # Get API keys
     anthropic_key = get_setting(db, "ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY", "")
     openai_key = get_setting(db, "OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
@@ -847,14 +898,16 @@ def render_roundtable_compact(db: Session, project_id: Optional[int] = None):
     session_options["+ New"] = None
 
     # =========================================================================
-    # ROW 1: CONTROL BAR
+    # ROW 1: CONTROL BAR - HOVER BASED
     # =========================================================================
-    cols = st.columns([1.2, 1.5, 0.6, 0.5, 0.6, 0.5, 0.5, 0.5, 0.8])
 
-    with cols[0]:
+    # First row: Title + Session selector
+    title_col, session_col = st.columns([1.5, 2])
+
+    with title_col:
         st.markdown("### 🔄 Roundtable")
 
-    with cols[1]:
+    with session_col:
         selected_name = st.selectbox(
             "Session",
             options=list(session_options.keys()),
@@ -883,47 +936,156 @@ def render_roundtable_compact(db: Session, project_id: Optional[int] = None):
         show_error("Session not found")
         return
 
-    # Popover: Settings
-    with cols[2]:
-        threshold_pct = int(session.voting_threshold * 100)
-        with st.popover(f"⚙️ {threshold_pct}%"):
+    # Get stats for display
+    threshold_pct = int(session.voting_threshold * 100)
+    prompt_indicator = "●" if session.master_prompt else ""
+    round_label = f"R{len(session.rounds)}" if session.rounds else "R0"
+    memory_status = service.get_memory_status()
+    memory_count = memory_status.get("rag_stats", {}).get("total", 0) if memory_status.get("enabled") else 0
+    repo_indicator = "●" if (session.project and session.project.github_repo) else ""
+    stats = service.get_session_stats(session.id)
+    cost = f"${stats.get('total_cost', 0):.2f}" if stats else "$0"
+
+    # Build HTML hover control bar
+    control_bar_html = f'''
+    <div class="hd-control-bar">
+        <div class="hd-container" id="ctrl-settings">
+            <div class="hd-trigger">⚙️ {threshold_pct}%</div>
+            <div class="hd-panel">
+                <div class="hd-header">
+                    <span>⚙️ Settings</span>
+                    <button class="hd-pin">📌</button>
+                </div>
+                <div class="hd-section">
+                    <div class="hd-section-title">Mode</div>
+                    <div style="color: #e0e0e0;">{session.execution_mode.upper()}</div>
+                </div>
+                <div class="hd-section">
+                    <div class="hd-section-title">Voting Threshold</div>
+                    <div style="color: #4a9eff; font-size: 18px; font-weight: 600;">{threshold_pct}%</div>
+                </div>
+                <div class="hd-divider"></div>
+                <div style="font-size: 11px; color: #666;">Click button below to edit</div>
+            </div>
+        </div>
+
+        <div class="hd-container" id="ctrl-prompt">
+            <div class="hd-trigger">📝{prompt_indicator}</div>
+            <div class="hd-panel">
+                <div class="hd-header">
+                    <span>📝 Prompt & Guardrails</span>
+                    <button class="hd-pin">📌</button>
+                </div>
+                <div class="hd-section">
+                    <div class="hd-section-title">System Prompt</div>
+                    <div style="color: #aaa; font-size: 12px;">{(session.master_prompt or "Not set")[:80]}...</div>
+                </div>
+                <div class="hd-divider"></div>
+                <div style="font-size: 11px; color: #666;">Click button below to edit</div>
+            </div>
+        </div>
+
+        <div class="hd-container" id="ctrl-execute">
+            <div class="hd-trigger">▶️ {round_label}</div>
+            <div class="hd-panel">
+                <div class="hd-header">
+                    <span>▶️ Execute</span>
+                    <button class="hd-pin">📌</button>
+                </div>
+                <div class="hd-section">
+                    <div class="hd-section-title">Rounds</div>
+                    <div style="color: #e0e0e0;">{len(session.rounds)} round(s)</div>
+                </div>
+                <div class="hd-section">
+                    <div class="hd-section-title">Agents</div>
+                    <div style="color: #e0e0e0;">{sum(len(r.agents) for r in session.rounds)} total</div>
+                </div>
+                <div class="hd-divider"></div>
+                <div style="font-size: 11px; color: #666;">Click button below to configure</div>
+            </div>
+        </div>
+
+        <div class="hd-container" id="ctrl-memory">
+            <div class="hd-trigger">🧠 {memory_count}</div>
+            <div class="hd-panel">
+                <div class="hd-header">
+                    <span>🧠 Memory</span>
+                    <button class="hd-pin">📌</button>
+                </div>
+                <div class="hd-section">
+                    <div class="hd-section-title">RAG Memories</div>
+                    <div style="color: #4a9eff; font-size: 18px; font-weight: 600;">{memory_count}</div>
+                </div>
+                <div class="hd-divider"></div>
+                <div style="font-size: 11px; color: #666;">Click button below for details</div>
+            </div>
+        </div>
+
+        <div class="hd-container" id="ctrl-github">
+            <div class="hd-trigger">🐙{repo_indicator}</div>
+            <div class="hd-panel align-right">
+                <div class="hd-header">
+                    <span>🐙 GitHub</span>
+                    <button class="hd-pin">📌</button>
+                </div>
+                <div class="hd-section">
+                    <div style="color: #aaa;">{"Connected" if repo_indicator else "Not connected"}</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="hd-container" id="ctrl-stats">
+            <div class="hd-trigger">📊 {cost}</div>
+            <div class="hd-panel align-right">
+                <div class="hd-header">
+                    <span>📊 Stats</span>
+                    <button class="hd-pin">📌</button>
+                </div>
+                <div class="hd-section">
+                    <div class="hd-section-title">Total Cost</div>
+                    <div style="color: #4a9eff; font-size: 18px; font-weight: 600;">{cost}</div>
+                </div>
+                <div class="hd-section">
+                    <div class="hd-section-title">Tokens</div>
+                    <div style="color: #e0e0e0;">{stats.get("total_tokens", 0):,} total</div>
+                </div>
+            </div>
+        </div>
+
+        <div style="margin-left: auto; color: {"#4ade80" if session.status.value == "active" else "#888"}; font-size: 13px;">
+            {"🟢" if session.status.value == "active" else "🟡"} {session.status.value.title()}
+        </div>
+    </div>
+    '''
+
+    st.markdown(control_bar_html, unsafe_allow_html=True)
+
+    # Expandable controls row (click to open full controls)
+    ctrl_cols = st.columns(6)
+
+    with ctrl_cols[0]:
+        with st.expander("⚙️", expanded=False):
             render_settings_popover(service, session)
 
-    # Popover: Prompt
-    with cols[3]:
-        prompt_indicator = "●" if session.master_prompt else ""
-        with st.popover(f"📝{prompt_indicator}"):
+    with ctrl_cols[1]:
+        with st.expander("📝", expanded=False):
             render_prompt_popover(service, session)
 
-    # Popover: Execute
-    with cols[4]:
-        round_label = f"R{len(session.rounds)}" if session.rounds else "R0"
-        with st.popover(f"▶️ {round_label}"):
+    with ctrl_cols[2]:
+        with st.expander("▶️", expanded=False):
             render_execute_popover(service, session)
 
-    # Popover: Memory
-    with cols[5]:
-        memory_status = service.get_memory_status()
-        memory_count = memory_status.get("rag_stats", {}).get("total", 0) if memory_status.get("enabled") else 0
-        with st.popover(f"🧠 {memory_count}"):
+    with ctrl_cols[3]:
+        with st.expander("🧠", expanded=False):
             render_memory_popover(service, session)
 
-    # Popover: GitHub
-    with cols[6]:
-        repo_indicator = "●" if (session.project and session.project.github_repo) else ""
-        with st.popover(f"🐙{repo_indicator}"):
+    with ctrl_cols[4]:
+        with st.expander("🐙", expanded=False):
             render_github_popover(db, service, session)
 
-    # Popover: Stats
-    with cols[7]:
-        stats = service.get_session_stats(session.id)
-        cost = stats.get("total_cost", 0) if stats else 0
-        with st.popover(f"📊"):
+    with ctrl_cols[5]:
+        with st.expander("📊", expanded=False):
             render_stats_popover(service, session)
-
-    # Status badge
-    with cols[8]:
-        st.markdown(get_status_badge(session.status))
 
     # =========================================================================
     # ROW 2: HISTORY NAVIGATION
