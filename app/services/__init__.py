@@ -32,6 +32,7 @@ from app.services.chat_service import (
     get_or_create_chat_session,
     get_chat_history,
     send_chat_message,
+    send_chat_message_with_images,
     clear_chat_history,
     get_token_usage,
 )
@@ -255,6 +256,7 @@ __all__ = [
     "get_or_create_chat_session",
     "get_chat_history",
     "send_chat_message",
+    "send_chat_message_with_images",
     "clear_chat_history",
     "get_token_usage",
     # Node service

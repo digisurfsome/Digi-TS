@@ -21,6 +21,13 @@ import json
 from app.services.roundtable_service import AVAILABLE_MODELS
 from app.services import get_setting
 from app.ui.layout import show_success, show_error, show_warning, show_info
+from app.utils.image_utils import (
+    validate_image,
+    SUPPORTED_FORMATS,
+    build_multimodal_message_openai,
+    build_multimodal_message_anthropic,
+    build_multimodal_parts_google,
+)
 
 
 # Default presets for quick model combinations
@@ -246,6 +253,28 @@ def render_parallel_chat_panel(db: Session) -> None:
         key="parallel_query_input"
     )
 
+    # Image upload section
+    with st.expander("📷 Attach Images", expanded=False):
+        uploaded_files = st.file_uploader(
+            "Upload images for agents to analyze",
+            type=SUPPORTED_FORMATS,
+            accept_multiple_files=True,
+            key="parallel_image_upload",
+            help="Attach images for the AI agents to analyze (PNG, JPG, GIF, WebP)"
+        )
+
+        # Show uploaded image previews
+        if uploaded_files:
+            img_cols = st.columns(min(len(uploaded_files), 4))
+            for idx, uploaded_file in enumerate(uploaded_files):
+                with img_cols[idx % 4]:
+                    st.image(uploaded_file, width=100, caption=uploaded_file.name[:15])
+                    # Validate image
+                    image_bytes = uploaded_file.getvalue()
+                    is_valid, error = validate_image(image_bytes)
+                    if not is_valid:
+                        st.error(f"⚠️ {error}")
+
     # Action buttons row
     btn_col1, btn_col2, btn_col3, btn_col4 = st.columns([1, 1, 1, 2])
 
@@ -273,7 +302,17 @@ def render_parallel_chat_panel(db: Session) -> None:
     # Handle send
     if send_btn and query.strip():
         st.session_state.parallel_query = query
-        _send_to_all_agents(db, query, anthropic_key, openai_key, google_key)
+
+        # Collect valid images
+        images = []
+        if uploaded_files:
+            for uploaded_file in uploaded_files:
+                image_bytes = uploaded_file.getvalue()
+                is_valid, error = validate_image(image_bytes)
+                if is_valid:
+                    images.append(image_bytes)
+
+        _send_to_all_agents(db, query, anthropic_key, openai_key, google_key, images)
 
     # Handle clear
     if clear_btn:
@@ -311,10 +350,13 @@ def _send_to_all_agents(
     query: str,
     anthropic_key: str,
     openai_key: str,
-    google_key: str
+    google_key: str,
+    images: List[bytes] = None
 ) -> None:
     """Send query to all configured agents in parallel."""
     import os
+
+    images = images or []
 
     # Get keys from settings or environment
     anthropic_key = anthropic_key or os.environ.get("ANTHROPIC_API_KEY", "")
@@ -323,7 +365,10 @@ def _send_to_all_agents(
 
     responses = {}
 
-    with st.spinner(f"Querying {len(st.session_state.parallel_agents)} agents..."):
+    agent_count = len(st.session_state.parallel_agents)
+    image_label = f" with {len(images)} image(s)" if images else ""
+
+    with st.spinner(f"Querying {agent_count} agents{image_label}..."):
         for idx, agent in enumerate(st.session_state.parallel_agents):
             model_name = agent["model"]
             label = agent["label"]
@@ -338,7 +383,8 @@ def _send_to_all_agents(
                     query=query,
                     anthropic_key=anthropic_key,
                     openai_key=openai_key,
-                    google_key=google_key
+                    google_key=google_key,
+                    images=images
                 )
                 responses[idx] = {
                     "label": label,
@@ -366,9 +412,11 @@ def _call_model(
     query: str,
     anthropic_key: str,
     openai_key: str,
-    google_key: str
+    google_key: str,
+    images: List[bytes] = None
 ) -> str:
-    """Call a specific model and return the response."""
+    """Call a specific model and return the response. Supports images for multimodal models."""
+    images = images or []
 
     if provider == "anthropic":
         if not anthropic_key:
@@ -376,11 +424,21 @@ def _call_model(
 
         import anthropic
         client = anthropic.Anthropic(api_key=anthropic_key)
-        response = client.messages.create(
-            model=model_id,
-            max_tokens=4096,
-            messages=[{"role": "user", "content": query}]
-        )
+
+        if images:
+            # Build multimodal message for Anthropic
+            user_content = build_multimodal_message_anthropic(query, images)
+            response = client.messages.create(
+                model=model_id,
+                max_tokens=4096,
+                messages=[{"role": "user", "content": user_content}]
+            )
+        else:
+            response = client.messages.create(
+                model=model_id,
+                max_tokens=4096,
+                messages=[{"role": "user", "content": query}]
+            )
         return response.content[0].text
 
     elif provider == "openai":
@@ -389,11 +447,21 @@ def _call_model(
 
         from openai import OpenAI
         client = OpenAI(api_key=openai_key)
-        response = client.chat.completions.create(
-            model=model_id,
-            messages=[{"role": "user", "content": query}],
-            max_tokens=4096
-        )
+
+        if images:
+            # Build multimodal message for OpenAI
+            user_content = build_multimodal_message_openai(query, images)
+            response = client.chat.completions.create(
+                model=model_id,
+                messages=[{"role": "user", "content": user_content}],
+                max_tokens=4096
+            )
+        else:
+            response = client.chat.completions.create(
+                model=model_id,
+                messages=[{"role": "user", "content": query}],
+                max_tokens=4096
+            )
         return response.choices[0].message.content
 
     elif provider == "google":
@@ -403,7 +471,13 @@ def _call_model(
         import google.generativeai as genai
         genai.configure(api_key=google_key)
         model = genai.GenerativeModel(model_id)
-        response = model.generate_content(query)
+
+        if images:
+            # Build multimodal parts for Gemini
+            parts = build_multimodal_parts_google(query, images)
+            response = model.generate_content(parts)
+        else:
+            response = model.generate_content(query)
         return response.text
 
     else:

@@ -27,9 +27,11 @@ from app.services.roundtable_service import (
     PROMPT_PRESETS,
     MEMORY_SYSTEM_AVAILABLE,
 )
-from app.services import get_setting
+from app.services import get_setting, set_setting
+from app.services.github_service import validate_github_token
 from app.ui.layout import show_success, show_error, show_warning, show_info
 from app.ui.hover_components import inject_hover_styles_and_scripts
+from app.utils.image_utils import validate_image, SUPPORTED_FORMATS
 
 
 # =============================================================================
@@ -510,10 +512,39 @@ def render_github_popover(db: Session, service: RoundtableService, session: Roun
 
     github_token = get_setting(db, "GITHUB_TOKEN") or ""
 
-    if not github_token:
-        st.warning("No token configured")
-        st.caption("Add in Settings tab")
+    # Token input section
+    token_input = st.text_input(
+        "GitHub Token",
+        value=github_token,
+        type="password",
+        key="compact_github_token",
+        placeholder="ghp_xxxxxxxxxxxx"
+    )
+
+    if st.button("💾 Save Token", key="compact_save_gh_token"):
+        if token_input:
+            validation = validate_github_token(token_input)
+            if validation["valid"]:
+                set_setting(db, "GITHUB_TOKEN", token_input, description="GitHub PAT")
+                db.commit()
+                show_success(f"Saved! User: {validation['username']}")
+                st.rerun()
+            else:
+                show_error(f"Invalid: {validation['error']}")
+        else:
+            show_warning("Enter a token first")
+
+    if github_token:
+        validation = validate_github_token(github_token)
+        if validation["valid"]:
+            st.success(f"✅ {validation['username']}")
+        else:
+            st.warning("⚠️ Token invalid")
+    else:
+        st.caption("No token saved yet")
         return
+
+    st.divider()
 
     # Get project repo
     project_repo = session.project.github_repo if session.project else None
@@ -1116,6 +1147,28 @@ def render_roundtable_compact(db: Session, project_id: Optional[int] = None):
     # =========================================================================
     st.divider()
 
+    # Image upload section
+    with st.expander("📷 Attach Images", expanded=False):
+        uploaded_files = st.file_uploader(
+            "Upload images for agents to analyze",
+            type=SUPPORTED_FORMATS,
+            accept_multiple_files=True,
+            key="roundtable_image_upload",
+            help="Attach images for the AI agents to analyze (PNG, JPG, GIF, WebP)"
+        )
+
+        # Show uploaded image previews
+        if uploaded_files:
+            img_cols = st.columns(min(len(uploaded_files), 4))
+            for idx, uploaded_file in enumerate(uploaded_files):
+                with img_cols[idx % 4]:
+                    st.image(uploaded_file, width=100, caption=uploaded_file.name[:15])
+                    # Validate image
+                    image_bytes = uploaded_file.getvalue()
+                    is_valid, error = validate_image(image_bytes)
+                    if not is_valid:
+                        st.error(f"⚠️ {error}")
+
     input_col, btn_col = st.columns([5, 1])
 
     with input_col:
@@ -1137,12 +1190,29 @@ def render_roundtable_compact(db: Session, project_id: Optional[int] = None):
 
         round_obj = session.rounds[-1]
 
+        # Collect valid images
+        images = []
+        if uploaded_files:
+            for uploaded_file in uploaded_files:
+                image_bytes = uploaded_file.getvalue()
+                is_valid, error = validate_image(image_bytes)
+                if is_valid:
+                    images.append(image_bytes)
+
+        # Build prompt with image indicator if images attached
+        full_prompt = prompt
+        if images:
+            full_prompt = f"[{len(images)} image(s) attached - analyze them as part of the task]\n\n{prompt}"
+
         # Update task prompt
-        service.update_round(round_obj.id, task_prompt=prompt)
+        service.update_round(round_obj.id, task_prompt=full_prompt)
+
+        # Store images in session state for service to use
+        st.session_state.roundtable_images = images
 
         # Execute
         with st.spinner("Running all agents..."):
-            result = service.execute_round(round_obj.id)
+            result = service.execute_round_with_images(round_obj.id, images=images) if images else service.execute_round(round_obj.id)
 
         if result["success"]:
             # Add to exchange history
@@ -1162,6 +1232,8 @@ def render_roundtable_compact(db: Session, project_id: Optional[int] = None):
         else:
             show_error(result.get("error", "Execution failed"))
 
+        # Clear images after use
+        st.session_state.roundtable_images = []
         st.rerun()
 
 

@@ -21,6 +21,7 @@ from app.services import (
     get_or_create_chat_session,
     get_chat_history,
     send_chat_message,
+    send_chat_message_with_images,
     clear_chat_history,
     get_token_usage,
     get_setting_as_int,
@@ -38,6 +39,7 @@ from app.services import (
     get_node_type_icon,
     create_node,
 )
+from app.utils.image_utils import validate_image, get_image_info, SUPPORTED_FORMATS
 from app.core.models import NodeType, NodeStatus
 
 
@@ -1362,6 +1364,7 @@ def render_chat_panel(
 ) -> None:
     """
     Render ultra-compact chat panel: input first, messages below.
+    Supports image uploads for multimodal chat.
     """
     # Get or create chat session
     if "current_chat_session_id" in st.session_state:
@@ -1391,6 +1394,28 @@ def render_chat_panel(
         label_visibility="collapsed",
         height=80
     )
+
+    # Image upload section
+    with st.expander("📷 Attach Images", expanded=False):
+        uploaded_files = st.file_uploader(
+            "Upload images",
+            type=SUPPORTED_FORMATS,
+            accept_multiple_files=True,
+            key="chat_image_upload",
+            help="Attach images for the AI to analyze (PNG, JPG, GIF, WebP)"
+        )
+
+        # Show uploaded image previews
+        if uploaded_files:
+            img_cols = st.columns(min(len(uploaded_files), 4))
+            for idx, uploaded_file in enumerate(uploaded_files):
+                with img_cols[idx % 4]:
+                    st.image(uploaded_file, width=100, caption=uploaded_file.name[:15])
+                    # Validate image
+                    image_bytes = uploaded_file.getvalue()
+                    is_valid, error = validate_image(image_bytes)
+                    if not is_valid:
+                        st.error(f"⚠️ {error}")
 
     col1, col2, col3 = st.columns([1, 1, 1])
     with col1:
@@ -1432,13 +1457,32 @@ def render_chat_panel(
 
     # Handle send
     if send_button and user_input and user_input.strip():
+        # Collect valid images
+        images = []
+        if uploaded_files:
+            for uploaded_file in uploaded_files:
+                image_bytes = uploaded_file.getvalue()
+                is_valid, error = validate_image(image_bytes)
+                if is_valid:
+                    images.append(image_bytes)
+
         with st.spinner("Thinking..."):
             try:
-                user_msg, assistant_msg = send_chat_message(
-                    db, project.id, chat_session.id, user_input.strip(),
-                    openai_api_key=openai_key if openai_key else None,
-                    chat_model=chat_model
-                )
+                if images:
+                    # Use multimodal function
+                    user_msg, assistant_msg = send_chat_message_with_images(
+                        db, project.id, chat_session.id, user_input.strip(),
+                        images=images,
+                        openai_api_key=openai_key if openai_key else None,
+                        chat_model=chat_model
+                    )
+                else:
+                    # Use regular function
+                    user_msg, assistant_msg = send_chat_message(
+                        db, project.id, chat_session.id, user_input.strip(),
+                        openai_api_key=openai_key if openai_key else None,
+                        chat_model=chat_model
+                    )
                 st.rerun()
             except Exception as e:
                 show_error(f"Chat error: {str(e)}")

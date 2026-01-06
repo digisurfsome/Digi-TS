@@ -756,6 +756,297 @@ class RoundtableService:
 
         return response_obj
 
+    def call_agent_with_images(
+        self,
+        agent: RoundtableAgent,
+        system_prompt: str,
+        user_prompt: str,
+        images: List[bytes],
+        iteration: int = 1
+    ) -> RoundtableResponse:
+        """
+        Make API call to a single agent with images and store response.
+
+        Args:
+            agent: The RoundtableAgent to call
+            system_prompt: System prompt for the agent
+            user_prompt: User prompt/task for the agent
+            images: List of image bytes to include
+            iteration: Iteration number for this response
+
+        Returns:
+            RoundtableResponse with the agent's response
+
+        Raises:
+            ValueError: If the required API client is not configured
+        """
+        import time
+        from app.utils.image_utils import (
+            build_multimodal_message_openai,
+            build_multimodal_message_anthropic,
+            build_multimodal_parts_google,
+        )
+
+        start_time = time.time()
+        content = ""
+        tokens_in = 0
+        tokens_out = 0
+        cost = 0.0
+
+        if agent.provider == "anthropic":
+            if not self.anthropic_client:
+                raise ValueError("Anthropic API key not configured")
+
+            # Build multimodal message for Anthropic
+            user_content = build_multimodal_message_anthropic(user_prompt, images)
+
+            response = self.anthropic_client.messages.create(
+                model=agent.model,
+                max_tokens=4096,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_content}]
+            )
+            content = response.content[0].text
+            tokens_in = response.usage.input_tokens
+            tokens_out = response.usage.output_tokens
+            cost = (tokens_in * 0.003 / 1000) + (tokens_out * 0.015 / 1000)
+
+        elif agent.provider == "openai":
+            if not self.openai_client:
+                raise ValueError("OpenAI API key not configured")
+
+            # Build multimodal message for OpenAI
+            user_content = build_multimodal_message_openai(user_prompt, images)
+
+            response = self.openai_client.chat.completions.create(
+                model=agent.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content}
+                ],
+                max_tokens=4096
+            )
+            content = response.choices[0].message.content
+            tokens_in = response.usage.prompt_tokens
+            tokens_out = response.usage.completion_tokens
+            if "gpt-5" in agent.model:
+                cost = (tokens_in * 1.75 / 1000000) + (tokens_out * 14.0 / 1000000)
+            else:
+                cost = (tokens_in * 0.005 / 1000) + (tokens_out * 0.015 / 1000)
+
+        elif agent.provider == "google":
+            if not self.google_client:
+                raise ValueError("Google AI API key not configured")
+
+            # Build multimodal parts for Gemini
+            parts = build_multimodal_parts_google(
+                f"{system_prompt}\n\n---\n\n{user_prompt}",
+                images
+            )
+
+            model = self.google_client.GenerativeModel(agent.model)
+            response = model.generate_content(parts)
+
+            content = response.text
+            try:
+                tokens_in = response.usage_metadata.prompt_token_count
+                tokens_out = response.usage_metadata.candidates_token_count
+            except AttributeError:
+                tokens_in = len(user_prompt) // 4 + len(images) * 1000
+                tokens_out = len(content) // 4
+
+            cost = (tokens_in * 0.00125 / 1000) + (tokens_out * 0.005 / 1000)
+
+        else:
+            raise ValueError(f"Unknown provider: {agent.provider}")
+
+        duration = time.time() - start_time
+
+        # Parse vote if this is a voter agent
+        vote = None
+        vote_reason = None
+        if agent.role == AgentRole.VOTER:
+            vote, vote_reason = self._parse_vote(content)
+
+        # Create and store response
+        response_obj = RoundtableResponse(
+            agent_id=agent.id,
+            iteration=iteration,
+            content=content,
+            vote=vote,
+            vote_reason=vote_reason,
+            tokens_input=tokens_in,
+            tokens_output=tokens_out,
+            cost=cost,
+            duration_seconds=duration,
+        )
+        self.db.add(response_obj)
+        self.db.commit()
+        self.db.refresh(response_obj)
+
+        return response_obj
+
+    def execute_round_with_images(
+        self,
+        round_id: int,
+        images: List[bytes],
+        execution_mode: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute all agents in a round with image inputs.
+
+        Args:
+            round_id: The round to execute
+            images: List of image bytes to include in the prompt
+            execution_mode: "single" (builder only) or "multi" (builder + voters)
+
+        Returns:
+            Dictionary with execution results
+        """
+        round_obj = self.get_round(round_id)
+        if not round_obj:
+            return {"success": False, "error": "Round not found"}
+
+        session = round_obj.session
+        mode = execution_mode or session.execution_mode
+
+        # Update round status
+        round_obj.status = "running"
+        self.db.commit()
+
+        # Build system prompt
+        system_prompt = session.master_prompt or DEFAULT_SYSTEM_PROMPT
+        if session.master_guardrails:
+            system_prompt += f"\n\n## Guardrails\n{session.master_guardrails}"
+
+        # PHASE 2: Inject assembled context from Memory System
+        if self.memory_enabled and self.context_assembler:
+            try:
+                assembled_context = self.context_assembler.assemble(
+                    current_task=round_obj.task_prompt or "",
+                    project_id=session.project_id,
+                    include_rag=True,
+                    include_baton=True
+                )
+                if assembled_context:
+                    system_prompt = assembled_context + "\n\n---\n\n" + system_prompt
+            except Exception:
+                pass
+
+        # Get agents sorted by order
+        agents = sorted(round_obj.agents, key=lambda a: a.agent_order)
+
+        if not agents:
+            round_obj.status = "completed"
+            round_obj.completed_at = datetime.utcnow()
+            self.db.commit()
+            return {"success": False, "error": "No agents configured for this round"}
+
+        # Find builder and voters
+        builders = [a for a in agents if a.role == AgentRole.BUILDER]
+        voters = [a for a in agents if a.role == AgentRole.VOTER]
+        reviewers = [a for a in agents if a.role == AgentRole.REVIEWER]
+
+        if not builders:
+            round_obj.status = "completed"
+            round_obj.completed_at = datetime.utcnow()
+            self.db.commit()
+            return {"success": False, "error": "No builder agent configured"}
+
+        result = {
+            "success": True,
+            "error": None,
+            "builder_response": None,
+            "voter_responses": [],
+            "reviewer_responses": [],
+            "consensus": None,
+        }
+
+        try:
+            # Execute builder first with images
+            builder = builders[0]
+            builder_prompt = builder.prompt_override or round_obj.task_prompt or ""
+
+            if images:
+                builder_response = self.call_agent_with_images(
+                    agent=builder,
+                    system_prompt=system_prompt,
+                    user_prompt=builder_prompt,
+                    images=images,
+                )
+            else:
+                builder_response = self.call_agent(
+                    agent=builder,
+                    system_prompt=system_prompt,
+                    user_prompt=builder_prompt,
+                )
+            result["builder_response"] = builder_response
+
+            # If multi-agent mode, run voters with builder's output
+            if mode == "multi" and (voters or reviewers):
+                builder_output = builder_response.content
+
+                # Execute voters (without images - they review the builder's output)
+                for voter in voters:
+                    voter_system = system_prompt + "\n\n" + DEFAULT_VOTER_PROMPT
+                    voter_prompt = f"""## Builder's Code Output
+
+{builder_output}
+
+## Original Task
+{round_obj.task_prompt or 'No task specified'}
+
+Please review the builder's code and provide your vote."""
+
+                    if voter.prompt_override:
+                        voter_prompt = voter.prompt_override + "\n\n" + voter_prompt
+
+                    voter_response = self.call_agent(
+                        agent=voter,
+                        system_prompt=voter_system,
+                        user_prompt=voter_prompt,
+                    )
+                    result["voter_responses"].append(voter_response)
+
+                # Execute reviewers
+                for reviewer in reviewers:
+                    reviewer_prompt = f"""## Builder's Code Output
+
+{builder_output}
+
+## Original Task
+{round_obj.task_prompt or 'No task specified'}
+
+Please provide a detailed code review."""
+
+                    if reviewer.prompt_override:
+                        reviewer_prompt = reviewer.prompt_override + "\n\n" + reviewer_prompt
+
+                    reviewer_response = self.call_agent(
+                        agent=reviewer,
+                        system_prompt=system_prompt,
+                        user_prompt=reviewer_prompt,
+                    )
+                    result["reviewer_responses"].append(reviewer_response)
+
+                # Calculate consensus
+                result["consensus"] = self.calculate_consensus(round_id)
+
+                if result["consensus"]:
+                    round_obj.consensus_reached = result["consensus"]["passed"]
+                    round_obj.consensus_percentage = result["consensus"]["percentage"]
+
+        except Exception as e:
+            result["success"] = False
+            result["error"] = str(e)
+
+        # Mark round as completed
+        round_obj.status = "completed"
+        round_obj.completed_at = datetime.utcnow()
+        self.db.commit()
+
+        return result
+
     def _parse_vote(self, content: str) -> tuple:
         """
         Parse vote from voter response content.

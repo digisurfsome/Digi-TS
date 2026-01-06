@@ -27,7 +27,7 @@ from app.services.roundtable_service import (
     MEMORY_SYSTEM_AVAILABLE,
 )
 from app.services.github_service import GitHubService, validate_github_token
-from app.services import get_setting
+from app.services import get_setting, set_setting
 import json
 from app.ui.layout import show_success, show_error, show_warning, show_info, render_token_meter
 from app.ui.qualification_panel import (
@@ -677,13 +677,31 @@ def render_github_section(db, service: RoundtableService, session: RoundtableSes
             help="Personal Access Token with repo permissions"
         )
 
-        if token_input and token_input != github_token:
-            # Validate and save token
-            validation = validate_github_token(token_input)
-            if validation["valid"]:
-                show_success(f"Token valid for user: {validation['username']}")
-            else:
-                show_warning(f"Token validation failed: {validation['error']}")
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            if st.button("💾 Save Token", key="save_github_token"):
+                if token_input:
+                    # Validate first
+                    validation = validate_github_token(token_input)
+                    if validation["valid"]:
+                        # Save to database
+                        set_setting(db, "GITHUB_TOKEN", token_input, description="GitHub Personal Access Token")
+                        db.commit()
+                        show_success(f"Token saved! Authenticated as: {validation['username']}")
+                        st.rerun()
+                    else:
+                        show_error(f"Invalid token: {validation['error']}")
+                else:
+                    show_warning("Please enter a token first")
+
+        with col2:
+            if github_token:
+                # Show current status
+                validation = validate_github_token(github_token)
+                if validation["valid"]:
+                    st.success(f"✅ Connected as: {validation['username']}")
+                else:
+                    st.warning("⚠️ Saved token is invalid")
 
     if not github_token:
         show_info("Add a GitHub token in Settings tab to enable GitHub features.")

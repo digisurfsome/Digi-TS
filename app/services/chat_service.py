@@ -265,3 +265,159 @@ def get_token_usage(db: Session, session_id: int) -> Dict[str, int]:
         "total_completion_tokens": session.total_completion_tokens,
         "total_tokens_used": session.total_tokens_used
     }
+
+
+def send_chat_message_with_images(
+    db: Session,
+    project_id: int,
+    session_id: int,
+    user_text: str,
+    images: List[bytes],
+    openai_api_key: Optional[str] = None,
+    chat_model: str = "gpt-4-turbo-preview"
+) -> Tuple[ChatMessage, ChatMessage]:
+    """
+    Send a chat message with images and get AI response.
+
+    Args:
+        db: Database session
+        project_id: Project ID
+        session_id: Chat session ID
+        user_text: User's message text
+        images: List of image bytes to include
+        openai_api_key: OpenAI API key (uses env if None)
+        chat_model: Model to use for chat
+
+    Returns:
+        Tuple of (user_message, assistant_message)
+
+    Raises:
+        Exception: If API call fails
+    """
+    from app.utils.image_utils import build_multimodal_message_openai
+
+    # Get chat session
+    session = db.query(ChatSession).filter(
+        ChatSession.id == session_id
+    ).first()
+
+    if not session:
+        raise ValueError(f"Chat session {session_id} not found")
+
+    # Create user message (store text only, images are processed separately)
+    image_count = len(images) if images else 0
+    stored_content = user_text
+    if image_count > 0:
+        stored_content = f"[{image_count} image(s) attached]\n\n{user_text}"
+
+    user_message = ChatMessage(
+        session_id=session_id,
+        role=MessageRole.USER,
+        content=stored_content
+    )
+    db.add(user_message)
+    db.commit()
+    db.refresh(user_message)
+
+    # Build message history for OpenAI
+    history = get_chat_history(db, session_id)
+    messages = []
+
+    # Add system message with project context if available
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if project and project.contexts:
+        active_contexts = [ctx for ctx in project.contexts if ctx.is_active]
+        if active_contexts:
+            context_text = "\n\n".join([
+                f"## {ctx.name}\n{ctx.content}"
+                for ctx in active_contexts
+            ])
+            messages.append({
+                "role": "system",
+                "content": f"You are a helpful AI assistant for the project '{project.name}'. Here is the project context:\n\n{context_text}"
+            })
+
+    # Add chat history (exclude the user message we just added)
+    for msg in history[:-1]:
+        messages.append({
+            "role": msg.role.value,
+            "content": msg.content
+        })
+
+    # Add current user message with images
+    if images:
+        # Build multimodal content
+        multimodal_content = build_multimodal_message_openai(user_text, images)
+        messages.append({
+            "role": "user",
+            "content": multimodal_content
+        })
+    else:
+        messages.append({
+            "role": "user",
+            "content": user_text
+        })
+
+    # Get API key
+    api_key = openai_api_key or app_settings.OPENAI_API_KEY
+    if not api_key:
+        ProcessLog.error("Chat", "No OpenAI API key configured")
+        raise ValueError("OpenAI API key not configured. Please set it in Settings or environment.")
+
+    # Call OpenAI API
+    try:
+        ProcessLog.info("Chat", f"Sending multimodal message to {chat_model}", details={
+            "model": chat_model,
+            "message_count": len(messages),
+            "image_count": image_count,
+            "user_message_length": len(user_text)
+        })
+
+        start_time = time.time()
+        client = OpenAI(api_key=api_key)
+
+        response = client.chat.completions.create(
+            model=chat_model,
+            messages=messages,
+            temperature=0.7,
+            max_tokens=4096
+        )
+        duration_ms = (time.time() - start_time) * 1000
+
+        # Extract response
+        assistant_content = response.choices[0].message.content
+        prompt_tokens = response.usage.prompt_tokens
+        completion_tokens = response.usage.completion_tokens
+        total_tokens = response.usage.total_tokens
+
+        ProcessLog.success("Chat", f"Received response from {chat_model}", details={
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "response_length": len(assistant_content)
+        }, duration_ms=duration_ms)
+
+        # Create assistant message
+        assistant_message = ChatMessage(
+            session_id=session_id,
+            role=MessageRole.ASSISTANT,
+            content=assistant_content,
+            token_count=completion_tokens,
+            model_used=chat_model
+        )
+        db.add(assistant_message)
+
+        # Update session token counts
+        session.total_prompt_tokens += prompt_tokens
+        session.total_completion_tokens += completion_tokens
+        session.total_tokens_used += total_tokens
+
+        db.commit()
+        db.refresh(assistant_message)
+
+        return user_message, assistant_message
+
+    except Exception as e:
+        ProcessLog.error("Chat", f"OpenAI API error: {str(e)}", details={"error": str(e)})
+        db.rollback()
+        raise Exception(f"OpenAI API error: {str(e)}")
