@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
 from app.core.models import BatonSnapshot
+from app.services.settings_service import get_setting
 
 
 class ContextAssembler:
@@ -197,12 +198,21 @@ class ContextAssembler:
         Returns:
             Dict with health metrics
         """
+        # Get baton threshold from settings (default 40% - before 50% degradation cliff)
+        try:
+            baton_threshold = int(get_setting(self.db, "auto_baton_threshold_percent") or "40")
+        except (ValueError, TypeError):
+            baton_threshold = 40
+
+        # Calculate warning thresholds based on baton threshold
+        caution_threshold = int(baton_threshold * 0.75)  # e.g., 30% if baton at 40%
+
         percentage = (current_tokens / self.max_tokens) * 100 if self.max_tokens > 0 else 0
 
-        if percentage < 50:
+        if percentage < caution_threshold:
             status = "healthy"
             color = "green"
-        elif percentage < 75:
+        elif percentage < baton_threshold:
             status = "caution"
             color = "yellow"
         else:
@@ -216,20 +226,23 @@ class ContextAssembler:
             "status": status,
             "color": color,
             "remaining": self.max_tokens - current_tokens,
-            "should_baton": percentage > 70,
-            "recommendation": self._get_recommendation(percentage)
+            "should_baton": percentage >= baton_threshold,
+            "baton_threshold": baton_threshold,
+            "recommendation": self._get_recommendation(percentage, baton_threshold)
         }
 
-    def _get_recommendation(self, percentage: float) -> str:
+    def _get_recommendation(self, percentage: float, baton_threshold: int = 40) -> str:
         """Get recommendation based on context usage."""
-        if percentage < 50:
+        caution_threshold = int(baton_threshold * 0.75)
+
+        if percentage < caution_threshold:
             return "Context healthy. Continue working."
-        elif percentage < 70:
-            return "Consider creating a checkpoint soon."
-        elif percentage < 85:
-            return "Create baton now. Context getting full."
+        elif percentage < baton_threshold:
+            return f"Approaching {baton_threshold}% threshold. Consider creating a checkpoint soon."
+        elif percentage < baton_threshold + 5:
+            return f"At {baton_threshold}% threshold. Create baton now."
         else:
-            return "CRITICAL: Generate baton immediately before context overflow."
+            return "CRITICAL: Generate baton immediately before context degradation."
 
     def _count_tokens(self, text: str) -> int:
         """Rough token count estimate (4 chars per token average)."""

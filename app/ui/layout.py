@@ -1372,16 +1372,29 @@ def render_context_health_indicator(session_id: int, total_tokens_used: int, set
         except (ValueError, TypeError):
             max_tokens = 100000
 
+    # Get baton threshold from settings (default 40% - before 50% degradation cliff)
+    baton_threshold = 40
+    if settings:
+        try:
+            baton_threshold = int(settings.get("auto_baton_threshold_percent", "40"))
+        except (ValueError, TypeError):
+            baton_threshold = 40
+
+    # Calculate warning thresholds based on baton threshold
+    # Yellow warning at 75% of threshold, Red at threshold
+    caution_threshold = int(baton_threshold * 0.75)  # e.g., 30% if baton at 40%
+    critical_threshold = baton_threshold  # e.g., 40%
+
     # Calculate percentage
     percentage = (total_tokens_used / max_tokens) * 100 if max_tokens > 0 else 0
     percentage = min(percentage, 100)  # Cap at 100%
 
-    # Determine status and color
-    if percentage < 50:
+    # Determine status and color based on configurable thresholds
+    if percentage < caution_threshold:
         status = "healthy"
         icon = "🟢"
         color = "green"
-    elif percentage < 75:
+    elif percentage < critical_threshold:
         status = "caution"
         icon = "🟡"
         color = "orange"
@@ -1400,16 +1413,17 @@ def render_context_health_indicator(session_id: int, total_tokens_used: int, set
         st.progress(min(percentage / 100, 1.0))
 
     with col3:
-        if percentage >= 70:
+        # Show baton button when at or above threshold
+        if percentage >= baton_threshold:
             if st.button("🔄 Baton", key=f"health_baton_{session_id}", help="Create a baton to preserve context"):
                 st.session_state.trigger_baton = True
                 st.rerun()
 
     # Show recommendation for high usage
-    if percentage >= 50:
+    if percentage >= caution_threshold:
         recommendations = {
-            "caution": "💡 Consider creating a baton soon to preserve context.",
-            "critical": "⚠️ Context nearly full! Create a baton to continue without losing context."
+            "caution": f"💡 Approaching {baton_threshold}% threshold. Consider creating a baton soon.",
+            "critical": f"⚠️ At {baton_threshold}% threshold! Create a baton to continue without losing context."
         }
         if status in recommendations:
             st.caption(recommendations[status])

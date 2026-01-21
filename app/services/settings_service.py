@@ -76,7 +76,7 @@ DEFAULT_SETTINGS = {
     "DEFAULT_CHAT_MODEL": "gpt-4.1",
     "DEFAULT_SUMMARY_MODEL": "gpt-4.1-mini",
     "max_context_tokens": "128000",
-    "auto_baton_threshold_percent": "80",
+    "auto_baton_threshold_percent": "40",
     "auto_warmup_enabled": "true",
     "warmup_prompt_1": "Review the project context and understand the design system.",
     "warmup_prompt_2": "Analyze the current node structure and relationships.",

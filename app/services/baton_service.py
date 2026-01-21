@@ -570,13 +570,13 @@ def check_auto_baton_trigger(
     if not session:
         return False
 
-    # Get threshold from settings
+    # Get threshold from settings (default 40% - before 50% degradation cliff)
     try:
-        threshold = int(settings.get("auto_baton_threshold_percent", "80"))
+        threshold = int(settings.get("auto_baton_threshold_percent", "40"))
     except ValueError:
-        threshold = 80
+        threshold = 40
 
-    max_tokens = int(settings.get("max_context_tokens", "8000"))
+    max_tokens = int(settings.get("max_context_tokens", "128000"))
 
     # Calculate percentage used
     percent_used = (session.total_tokens_used / max_tokens) * 100 if max_tokens > 0 else 0
