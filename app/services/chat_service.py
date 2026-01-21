@@ -133,7 +133,8 @@ def send_chat_message(
     session_id: int,
     user_text: str,
     openai_api_key: Optional[str] = None,
-    chat_model: str = "gpt-4-turbo-preview"
+    chat_model: str = "gpt-4-turbo-preview",
+    settings: Optional[Dict] = None
 ) -> Tuple[ChatMessage, ChatMessage]:
     """
     Send a chat message and get AI response.
@@ -145,6 +146,7 @@ def send_chat_message(
         user_text: User's message text
         openai_api_key: OpenAI API key (uses env if None)
         chat_model: Model to use for chat
+        settings: Optional settings dict for RAG/Baton configuration
 
     Returns:
         Tuple of (user_message, assistant_message)
@@ -160,6 +162,16 @@ def send_chat_message(
     if not session:
         raise ValueError(f"Chat session {session_id} not found")
 
+    # Check if approaching token threshold
+    if settings:
+        from app.services.baton_service import check_auto_baton_trigger
+        try:
+            should_baton = check_auto_baton_trigger(db, session_id, settings)
+            if should_baton:
+                ProcessLog.warning("Chat", "Token threshold reached - consider creating a baton")
+        except Exception as e:
+            ProcessLog.warning("Chat", f"Token check failed: {str(e)}")
+
     # Create user message
     user_message = ChatMessage(
         session_id=session_id,
@@ -170,24 +182,52 @@ def send_chat_message(
     db.commit()
     db.refresh(user_message)
 
+    # Build enhanced context with RAG + Baton
+    max_tokens = 100000
+    if settings:
+        try:
+            max_tokens = int(settings.get("max_context_tokens", "100000"))
+        except (ValueError, TypeError):
+            max_tokens = 100000
+
+    enhanced_context = _build_enhanced_context(
+        db=db,
+        project_id=project_id,
+        session_id=session_id,
+        user_text=user_text,
+        max_context_tokens=max_tokens
+    )
+
     # Build message history for OpenAI
     history = get_chat_history(db, session_id)
     messages = []
 
     # Add system message with project context if available
     project = db.query(Project).filter(Project.id == project_id).first()
-    if project and project.contexts:
-        # Get active contexts
-        active_contexts = [ctx for ctx in project.contexts if ctx.is_active]
-        if active_contexts:
-            context_text = "\n\n".join([
-                f"## {ctx.name}\n{ctx.content}"
-                for ctx in active_contexts
-            ])
-            messages.append({
-                "role": "system",
-                "content": f"You are a helpful AI assistant for the project '{project.name}'. Here is the project context:\n\n{context_text}"
-            })
+    system_content = ""
+
+    if project:
+        system_content = f"You are a helpful AI assistant for the project '{project.name}'."
+
+        # Add active project contexts
+        if project.contexts:
+            active_contexts = [ctx for ctx in project.contexts if ctx.is_active]
+            if active_contexts:
+                context_text = "\n\n".join([
+                    f"## {ctx.name}\n{ctx.content}"
+                    for ctx in active_contexts
+                ])
+                system_content += f"\n\nHere is the project context:\n\n{context_text}"
+
+        # Append enhanced context from RAG + Baton
+        if enhanced_context:
+            system_content += f"\n\n## Retrieved Context (from RAG + Baton)\n{enhanced_context}"
+
+    if system_content:
+        messages.append({
+            "role": "system",
+            "content": system_content
+        })
 
     # Add chat history (exclude the user message we just added since we'll add it below)
     for msg in history[:-1]:  # Exclude last message (the one we just added)
@@ -213,7 +253,9 @@ def send_chat_message(
         ProcessLog.info("Chat", f"Sending message to {chat_model}", details={
             "model": chat_model,
             "message_count": len(messages),
-            "user_message_length": len(user_text)
+            "user_message_length": len(user_text),
+            "enhanced_context_length": len(enhanced_context) if enhanced_context else 0,
+            "has_enhanced_context": bool(enhanced_context)
         })
 
         start_time = time.time()
