@@ -228,6 +228,9 @@ from app.services.pipeline_settings_service import (
     initialize_default_settings,
 )
 
+# Codebase Indexer Service
+from app.services.codebase_indexer import CodebaseIndexer
+
 __all__ = [
     # User service
     "get_or_create_default_user",
@@ -396,4 +399,6 @@ __all__ = [
     "get_toggle",
     "set_toggle",
     "initialize_default_settings",
+    # Codebase Indexer Service
+    "CodebaseIndexer",
 ]
