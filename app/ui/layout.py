@@ -1355,6 +1355,66 @@ def render_token_meter(
             st.metric("Total Used", f"{total_tokens:,}")
 
 
+def render_context_health_indicator(session_id: int, total_tokens_used: int, settings: Dict = None):
+    """
+    Render a visual indicator of context window health.
+
+    Args:
+        session_id: Current chat session ID
+        total_tokens_used: Total tokens used in session
+        settings: Application settings dict
+    """
+    # Get max tokens from settings or use default
+    max_tokens = 100000
+    if settings:
+        try:
+            max_tokens = int(settings.get("max_context_tokens", "100000"))
+        except (ValueError, TypeError):
+            max_tokens = 100000
+
+    # Calculate percentage
+    percentage = (total_tokens_used / max_tokens) * 100 if max_tokens > 0 else 0
+    percentage = min(percentage, 100)  # Cap at 100%
+
+    # Determine status and color
+    if percentage < 50:
+        status = "healthy"
+        icon = "🟢"
+        color = "green"
+    elif percentage < 75:
+        status = "caution"
+        icon = "🟡"
+        color = "orange"
+    else:
+        status = "critical"
+        icon = "🔴"
+        color = "red"
+
+    # Render compact display
+    col1, col2, col3 = st.columns([1, 2, 1])
+
+    with col1:
+        st.markdown(f"{icon} **{percentage:.0f}%**")
+
+    with col2:
+        st.progress(min(percentage / 100, 1.0))
+
+    with col3:
+        if percentage >= 70:
+            if st.button("🔄 Baton", key=f"health_baton_{session_id}", help="Create a baton to preserve context"):
+                st.session_state.trigger_baton = True
+                st.rerun()
+
+    # Show recommendation for high usage
+    if percentage >= 50:
+        recommendations = {
+            "caution": "💡 Consider creating a baton soon to preserve context.",
+            "critical": "⚠️ Context nearly full! Create a baton to continue without losing context."
+        }
+        if status in recommendations:
+            st.caption(recommendations[status])
+
+
 def render_chat_panel(
     db: Session,
     user_id: int,
@@ -1403,6 +1463,27 @@ def render_chat_panel(
     # Token Usage Meter (Item 5)
     max_tokens = int(settings.get("max_context_tokens", "128000"))
     render_token_meter(db, chat_session.id, max_tokens)
+
+    # Context Health Indicator (Session 6)
+    if chat_session and hasattr(chat_session, 'total_tokens_used'):
+        render_context_health_indicator(
+            session_id=chat_session.id,
+            total_tokens_used=chat_session.total_tokens_used or 0,
+            settings=settings
+        )
+
+    # Handle trigger_baton from health indicator
+    if st.session_state.get("trigger_baton"):
+        st.session_state.trigger_baton = False
+        try:
+            baton, new_session = generate_baton(
+                db=db, user_id=user_id, project_id=project.id,
+                from_session_id=chat_session.id, settings=settings, run_warmup=True
+            )
+            show_success("Baton created from health indicator!")
+            st.rerun()
+        except Exception as e:
+            show_error(f"Baton failed: {str(e)}")
 
     # Show warm-up checkbox (Item 7)
     show_warmup = st.checkbox(
