@@ -30,6 +30,14 @@ except ImportError:
     RAGService = None
     ContextAssembler = None
 
+# Process Log imports (optional)
+try:
+    from app.services.process_log import ProcessLog
+    PROCESS_LOG_AVAILABLE = True
+except ImportError:
+    PROCESS_LOG_AVAILABLE = False
+    ProcessLog = None
+
 # Testing Facility imports (Phase 3)
 try:
     from app.services.testing_facility import (
@@ -151,6 +159,68 @@ Your response MUST start with one of:
 - REJECT: [your explanation with specific issues]
 
 Be specific about what's good or what needs fixing."""
+
+
+def store_roundtable_decision_to_rag(
+    consensus_content: str,
+    round_name: str,
+    votes: Dict,
+    project_id: int,
+    session_id: int = None
+) -> Optional[str]:
+    """
+    Store roundtable consensus decision to RAG for future retrieval.
+
+    Args:
+        consensus_content: The agreed-upon content/code
+        round_name: Name/description of the round
+        votes: Dict of agent votes {agent_name: vote}
+        project_id: Project ID
+        session_id: Optional session ID
+
+    Returns:
+        RAG document ID, or None if storage failed
+    """
+    if not MEMORY_SYSTEM_AVAILABLE:
+        return None
+
+    try:
+        rag = RAGService(persist_directory="./data/chromadb")
+
+        # Format vote summary
+        vote_summary = ", ".join([
+            f"{agent}: {vote}" for agent, vote in votes.items()
+        ])
+
+        # Build decision text
+        decision_text = f"""ROUNDTABLE CONSENSUS: {round_name}
+VOTES: {vote_summary}
+TIMESTAMP: {datetime.utcnow().isoformat()}
+
+AGREED CONTENT:
+{consensus_content[:2000]}
+"""
+
+        doc_id = rag.store_decision(
+            decision=decision_text,
+            context=f"Roundtable round: {round_name}",
+            tags=["roundtable", "consensus", "multi-agent"],
+            project_id=project_id,
+            session_id=session_id
+        )
+
+        if PROCESS_LOG_AVAILABLE and ProcessLog:
+            ProcessLog.info("Roundtable", f"Stored consensus to RAG: {round_name}", details={
+                "doc_id": doc_id,
+                "vote_count": len(votes)
+            })
+
+        return doc_id
+
+    except Exception as e:
+        if PROCESS_LOG_AVAILABLE and ProcessLog:
+            ProcessLog.warning("Roundtable", f"Failed to store consensus to RAG: {str(e)}")
+        return None
 
 
 class RoundtableService:
@@ -967,11 +1037,22 @@ Please provide a detailed code review."""
                         session_id=session.id
                     )
 
-                # Store decision if consensus was reached
+                # Store decision if consensus was reached (enhanced with vote details)
                 if result.get("consensus") and result["consensus"].get("passed"):
-                    self.rag_service.store_decision(
-                        decision=f"Approved: {round_obj.task_prompt or 'Roundtable task'}",
-                        context=f"Consensus: {result['consensus']['percentage']*100:.0f}% approval",
+                    # Build votes dictionary for detailed storage
+                    votes_dict = {}
+                    for voter_resp in result.get("voter_responses", []):
+                        if voter_resp and voter_resp.vote:
+                            agent = self.get_agent(voter_resp.agent_id)
+                            agent_name = self.get_model_display_name(agent.model) if agent else f"Agent_{voter_resp.agent_id}"
+                            votes_dict[agent_name] = voter_resp.vote.value
+
+                    # Use the enhanced roundtable RAG storage function
+                    consensus_content = result["builder_response"].content if result.get("builder_response") else ""
+                    store_roundtable_decision_to_rag(
+                        consensus_content=consensus_content,
+                        round_name=round_obj.name or round_obj.task_prompt or "Roundtable task",
+                        votes=votes_dict,
                         project_id=session.project_id,
                         session_id=session.id
                     )
