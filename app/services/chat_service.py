@@ -14,6 +14,8 @@ from app.core.models import ChatSession, ChatMessage, MessageRole, Project
 from app.core.repositories import BaseRepository
 from app.config.settings import settings as app_settings
 from app.services.process_log import ProcessLog
+from app.services.rag_service import RAGService
+from app.services.context_assembler import ContextAssembler
 
 
 def get_or_create_chat_session(
@@ -73,6 +75,56 @@ def get_chat_history(db: Session, session_id: int) -> List[ChatMessage]:
     return db.query(ChatMessage).filter(
         ChatMessage.session_id == session_id
     ).order_by(ChatMessage.created_at).all()
+
+
+def _build_enhanced_context(
+    db: Session,
+    project_id: int,
+    session_id: int,
+    user_text: str,
+    max_context_tokens: int = 100000
+) -> str:
+    """
+    Build enhanced context using RAG and Baton systems.
+
+    Args:
+        db: Database session
+        project_id: Current project ID
+        session_id: Current chat session ID
+        user_text: The user's current message (used for RAG query)
+        max_context_tokens: Maximum tokens for context
+
+    Returns:
+        Assembled context string ready for system prompt, or empty string on failure
+    """
+    try:
+        # Initialize services
+        rag_service = RAGService(persist_directory="./data/chromadb")
+        context_assembler = ContextAssembler(
+            db=db,
+            rag_service=rag_service,
+            max_context_tokens=max_context_tokens
+        )
+
+        # Assemble context from Baton + RAG
+        assembled_context = context_assembler.assemble(
+            current_task=user_text,
+            project_id=project_id,
+            include_rag=True,
+            include_baton=True
+        )
+
+        ProcessLog.info("Chat", "Built enhanced context", details={
+            "context_length": len(assembled_context) if assembled_context else 0,
+            "project_id": project_id
+        })
+
+        return assembled_context or ""
+
+    except Exception as e:
+        # Fail gracefully - log error but don't break chat
+        ProcessLog.warning("Chat", f"Failed to build enhanced context: {str(e)}")
+        return ""
 
 
 def send_chat_message(
