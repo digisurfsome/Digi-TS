@@ -42,6 +42,7 @@ from app.ui.layout import (
     inject_compact_css,
     render_compact_status_bar,
     render_inline_context_refresh,
+    render_codebase_indexer_ui,
 )
 from app.ui.node_tree_panel import render_design_tree_panel
 from app.ui.roundtable_panel import render_roundtable_panel
@@ -661,6 +662,13 @@ def main():
                 if "current_user" in locals() and current_user:
                     with get_db() as db:
                         render_settings_ui(db, user_id=None)
+
+                        # Codebase Indexer UI (requires project)
+                        st.markdown("---")
+                        if st.session_state.get("current_project_id"):
+                            render_codebase_indexer_ui(st.session_state.current_project_id)
+                        else:
+                            st.info("📁 Select a project to use the Codebase Indexer.")
                 else:
                     st.info("Select a user to configure settings.")
 
