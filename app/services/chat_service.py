@@ -127,6 +127,90 @@ def _build_enhanced_context(
         return ""
 
 
+def _extract_and_store_to_rag(
+    user_text: str,
+    assistant_content: str,
+    project_id: int,
+    session_id: int
+) -> None:
+    """
+    Extract key information from conversation and store in RAG.
+
+    Extracts and stores:
+    - Decisions (when assistant confirms a choice or approach)
+    - Code changes (when code is written or modified)
+    - Errors and solutions (when debugging)
+    - Conversation summaries (always, for general retrieval)
+
+    Args:
+        user_text: The user's message
+        assistant_content: The assistant's response
+        project_id: Current project ID
+        session_id: Current session ID
+    """
+    try:
+        rag = RAGService(persist_directory="./data/chromadb")
+
+        content_lower = assistant_content.lower()
+        stored_items = []
+
+        # Detect and store decisions
+        decision_markers = [
+            "i'll use", "let's go with", "the best approach",
+            "i recommend", "we should", "i've decided",
+            "the solution is", "here's the plan", "i suggest"
+        ]
+        if any(marker in content_lower for marker in decision_markers):
+            summary = assistant_content[:500]
+            rag.store_decision(
+                decision=summary,
+                context=user_text[:200],
+                tags=["auto-extracted"],
+                project_id=project_id,
+                session_id=session_id
+            )
+            stored_items.append("decision")
+
+        # Detect and store code changes
+        code_markers = ["```", "def ", "class ", "function ", "const ", "import ", "from "]
+        if any(marker in assistant_content for marker in code_markers):
+            rag.store_code_change(
+                summary=f"Code discussed: {user_text[:100]}",
+                files=["auto-detected"],
+                details=assistant_content[:1000],
+                project_id=project_id,
+                session_id=session_id
+            )
+            stored_items.append("code_change")
+
+        # Detect and store errors/solutions
+        error_markers = ["error", "bug", "fix", "issue", "problem", "solution", "traceback", "exception"]
+        if any(marker in content_lower for marker in error_markers):
+            rag.store_error(
+                error=user_text[:300],
+                solution=assistant_content[:500],
+                project_id=project_id,
+                session_id=session_id
+            )
+            stored_items.append("error_solution")
+
+        # Always store conversation summary
+        rag.store_conversation(
+            summary=f"Q: {user_text[:150]}... A: {assistant_content[:150]}...",
+            key_points=[user_text[:100]],
+            project_id=project_id,
+            session_id=session_id
+        )
+        stored_items.append("conversation")
+
+        if stored_items:
+            ProcessLog.info("RAG", f"Stored extractions: {', '.join(stored_items)}")
+
+    except Exception as e:
+        # Never fail the chat if RAG storage fails
+        ProcessLog.warning("RAG", f"Extraction storage failed: {str(e)}")
+
+
 def send_chat_message(
     db: Session,
     project_id: int,
@@ -295,6 +379,14 @@ def send_chat_message(
         session.total_prompt_tokens += prompt_tokens
         session.total_completion_tokens += completion_tokens
         session.total_tokens_used += total_tokens
+
+        # Extract and store to RAG for future retrieval
+        _extract_and_store_to_rag(
+            user_text=user_text,
+            assistant_content=assistant_content,
+            project_id=project_id,
+            session_id=session_id
+        )
 
         db.commit()
         db.refresh(assistant_message)
