@@ -2168,3 +2168,132 @@ def render_learning_status_bar(
     # This function is kept for backwards compatibility but the
     # compact status bar is now the preferred approach
     pass
+
+
+# ============================================================================
+# CODEBASE INDEXER UI (Session 5)
+# ============================================================================
+
+
+def render_codebase_indexer_ui(project_id: int) -> None:
+    """
+    Render UI for codebase indexing.
+
+    Args:
+        project_id: Current project ID
+    """
+    from app.services.codebase_indexer import CodebaseIndexer
+    from app.services.rag_service import RAGService
+
+    st.subheader("📁 Codebase Indexer")
+    st.markdown("Index your project files for AI-assisted coding with full codebase awareness.")
+
+    # Initialize session state for this component
+    if "index_directory" not in st.session_state:
+        st.session_state.index_directory = ""
+    if "last_index_stats" not in st.session_state:
+        st.session_state.last_index_stats = None
+
+    # Directory input row
+    col1, col2 = st.columns([3, 1])
+
+    with col1:
+        directory = st.text_input(
+            "Directory to Index",
+            value=st.session_state.index_directory,
+            placeholder="/path/to/your/project",
+            help="Enter the full path to your project directory",
+            key="indexer_directory_input"
+        )
+
+    with col2:
+        st.markdown("<br>", unsafe_allow_html=True)  # Align button with input
+        index_clicked = st.button("🔍 Index", type="primary", key="index_btn")
+
+    # Advanced options
+    with st.expander("⚙️ Advanced Options"):
+        col_ext, col_clear = st.columns(2)
+
+        with col_ext:
+            extensions = st.multiselect(
+                "File Extensions",
+                options=['.py', '.js', '.ts', '.jsx', '.tsx', '.md', '.json', '.yaml', '.yml', '.sql', '.html', '.css', '.go', '.rs'],
+                default=['.py', '.js', '.ts', '.md'],
+                help="Select which file types to index",
+                key="indexer_extensions"
+            )
+
+        with col_clear:
+            clear_first = st.checkbox(
+                "Clear existing index first",
+                value=False,
+                help="Remove all previously indexed files before re-indexing",
+                key="indexer_clear_first"
+            )
+
+    # Handle index action
+    if index_clicked and directory:
+        st.session_state.index_directory = directory
+
+        with st.spinner("🔍 Indexing codebase... This may take a moment."):
+            try:
+                indexer = CodebaseIndexer()
+
+                # Clear if requested
+                if clear_first:
+                    deleted = indexer.clear_project_index(project_id)
+                    st.info(f"🗑️ Cleared {deleted} previously indexed files")
+
+                # Run indexing
+                stats = indexer.index_directory(
+                    directory=directory,
+                    project_id=project_id,
+                    extensions=extensions if extensions else None
+                )
+
+                st.session_state.last_index_stats = stats
+
+                # Show results
+                if stats["files_indexed"] > 0:
+                    st.success(f"✅ Indexed **{stats['files_indexed']}** files ({stats['total_chars']:,} characters)")
+                elif stats["files_found"] == 0:
+                    st.warning("⚠️ No matching files found. Check the directory path and extensions.")
+                else:
+                    st.warning(f"⚠️ Found {stats['files_found']} files but indexed 0. Files may be too large or empty.")
+
+                # Show errors if any
+                if stats["errors"]:
+                    with st.expander(f"⚠️ {len(stats['errors'])} errors occurred"):
+                        for error in stats["errors"][:10]:
+                            st.text(error)
+                        if len(stats["errors"]) > 10:
+                            st.text(f"... and {len(stats['errors']) - 10} more")
+
+            except Exception as e:
+                st.error(f"❌ Indexing failed: {str(e)}")
+
+    elif index_clicked and not directory:
+        st.warning("Please enter a directory path to index.")
+
+    # Show current index stats
+    st.markdown("---")
+    st.markdown("**📊 Current Index Status**")
+
+    try:
+        indexer = CodebaseIndexer()
+        index_stats = indexer.get_index_stats(project_id)
+        rag = RAGService()
+        rag_stats = rag.get_stats()
+
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("📄 Indexed Files", index_stats.get("indexed_files", 0))
+        with col2:
+            st.metric("💡 Decisions", rag_stats.get("decisions", 0))
+        with col3:
+            st.metric("🔧 Code Changes", rag_stats.get("code_changes", 0))
+        with col4:
+            st.metric("💬 Conversations", rag_stats.get("conversations", 0))
+
+    except Exception as e:
+        st.caption(f"Could not load stats: {str(e)}")
