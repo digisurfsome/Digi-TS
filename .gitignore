@@ -59,3 +59,6 @@ htmlcov/
 
 # Poetry
 poetry.lock
+
+# ChromaDB data
+data/
